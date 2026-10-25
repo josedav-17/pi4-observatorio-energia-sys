@@ -54,9 +54,14 @@ Fuentes -> BRONCE (dato tal cual + linaje) -> PLATA (limpio) -> ORO (modelo estr
 
 ## 🤖 Uso de IA
 
-(Declarar aquí qué herramientas de IA se usaron y para qué.)
-
+SE USO GEMINI PARA GENERAR UNA GUIA SOBRE QUE EVIDENCIAS SON IMPORTANTES PARA ESTE PROYECTO BASADO EN LOS REQUIERIMIENTOS DE LA TAREA, ES QUE ERAN BASTANTES COSITAS Y HONESTAMENTE NO SABIA QUE QUERIA EL PROFE VER EN EL DESARROLLO ENTONCES SI QUERIA SABER QUE ERA LO MAS IMPORTANTE Y QUE DEBIA MOSTRAR ASI NI MI VIDEO, NI MIS CAPTURAS COLAPSARIAN EL PROYECTO Y SE VERIA MAS PROFESIONAL (SOY DECENTE DESARROLLANDO Y NO TAN BUENO CON DOCUMENTACIÓN -SALUDOS LOS QUIERO <3 )
 
 ## 🤖 EVIDENCIAS
 
-![alt text](/Evidencias/image.png)
+![alt text](/evidencias/evidencia_01_entorno.png)
+
+![alt text](/evidencias/evidencia_02_repositorio.png)
+
+![alt text](/evidencias/evidencia_03_repositorio.png)
+
+![alt text](/evidencias/evidencia_04_repositorio.png)
