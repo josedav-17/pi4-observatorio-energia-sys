@@ -14,7 +14,7 @@ import time     # time.time(): segundos actuales, para medir cuanto tarda
 import pandas as pd     # pandas: para abrir cada Parquet y contar filas y columnas
 
 from src import config                              # configuracion central
-from src.extract import enerandes, ideam, noaa, xm  # los 4 extractores (src/extract/*.py)
+from src.extract import enerandes, ideam, ideam_temperatura, noaa, xm, xm_aportes
 from src.utils import log                           # mensajes con hora
 
 
@@ -33,10 +33,21 @@ def main() -> None:
     forzar = "--forzar" in sys.argv       # True si el comando trae --forzar
     inicio = time.time()                  # hora de inicio, para medir
     log(f"Pipeline bronce | rango {config.FECHA_INICIO} a {config.FECHA_FIN} | forzar={forzar}")
-    for extractor in (xm, ideam, noaa, enerandes):   # los 4 extractores, EN ORDEN
+    for extractor in (xm, xm_aportes, ideam, ideam_temperatura, noaa, enerandes):
         extractor.extraer(forzar)                    # todos tienen la funcion extraer()
+    exportar_muestras()
     resumen()
     log(f"Listo en {time.time() - inicio:.0f} s")    # :.0f = sin decimales
+
+
+def exportar_muestras() -> None:
+    """Exporta las primeras 200 filas de cada archivo bronce a CSV."""
+    directorio = config.RAIZ / "data" / "sample"
+    directorio.mkdir(parents=True, exist_ok=True)
+    for archivo in sorted(config.DIR_BRONZE.glob("*.parquet")):
+        muestra = pd.read_parquet(archivo).head(200)
+        muestra.to_csv(directorio / f"{archivo.stem}.csv", index=False)
+        log(f"   muestra {archivo.stem}.csv: {len(muestra)} filas")
 
 
 # Este bloque solo se ejecuta cuando se corre el archivo directamente

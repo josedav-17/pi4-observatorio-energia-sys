@@ -1,0 +1,215 @@
+GUIA DE ENTREGA Y EVIDENCIAS - PI4 OBSERVATORIO ENERGIA
+
+Este archivo es una lista de verificacion para preparar las capturas, el
+README, el video individual y el comprimido. Completar los campos entre
+corchetes con informacion real del equipo. No inventar commits, PR, enlaces,
+resultados ni nombres.
+
+1. ENTORNO DE TRABAJO: VS CODE Y PYTHON
+
+Antes de grabar o tomar capturas:
+
+[ ] Abrir la carpeta clonada del repositorio en VS Code.
+[ ] Confirmar una version Python 3.11 o superior:
+    python --version
+[ ] Crear o activar el entorno virtual del proyecto:
+    python -m venv .venv
+    .\.venv\Scripts\Activate.ps1
+[ ] Instalar dependencias:
+    python -m pip install -r requirements.txt
+[ ] Comprobar que Python viene del entorno virtual:
+    python -c "import sys; print(sys.executable)"
+    La ruta mostrada debe apuntar a la carpeta .venv del proyecto.
+[ ] Asegurarse de que EnerAndes esta en
+    data\insumos\ventas_enerandes_2023_2026.xlsx
+
+CAPTURA 1 - entorno:
+- Mostrar la ventana de VS Code con el proyecto abierto.
+- Mostrar en la terminal las salidas de `python --version` y
+  `python -c "import sys; print(sys.executable)"`.
+- Nombre sugerido: evidencia_01_entorno.png
+- En README, agregarla en una seccion "Evidencias" con una breve leyenda.
+
+2. REPOSITORIO, TAG, COMMITS Y PULL REQUEST
+
+[ ] Verificar que el repositorio del equipo sea publico y tenga el nombre
+    solicitado por la actividad.
+[ ] Cada estudiante debe verificar en GitHub su propio historial: al menos
+    3 commits propios y 1 Pull Request propio. Una PR debe mostrar autor,
+    titulo, cambios y estado en GitHub.
+[ ] Asegurarse de que los cambios de equipo se hayan integrado por PR segun
+    las reglas de la rama main.
+[ ] Crear y publicar la etiqueta `ea1`, si aun no existe:
+    git tag ea1
+    git push origin ea1
+    Si `ea1` ya existe, revisar la etiqueta remota antes de crear otra.
+[ ] Confirmar en GitHub que `ea1` aparece en Releases o Tags.
+
+CAPTURA 2 - repositorio:
+- Mostrar la pagina principal publica del repositorio, con el propietario,
+  nombre y README visibles.
+- Nombre sugerido: evidencia_02_repositorio.png
+
+CAPTURA 3 - historial:
+- Mostrar en GitHub el historial personal de commits y la PR propia.
+- Si se toman dos capturas, usar evidencia_03_commits.png y
+  evidencia_04_pull_request.png.
+- No atribuirse commits o PR de otra persona.
+
+CAPTURA 4 - tag:
+- Mostrar la pagina de Tags/Releases donde aparezca `ea1`.
+- Nombre sugerido: evidencia_05_tag_ea1.png
+
+3. EJECUCION DEL PIPELINE Y PRUEBAS
+
+Comandos para demostrar en la terminal integrada de VS Code:
+
+    python -m src.pipeline
+    python -m pytest
+
+El pipeline reutiliza los Parquet existentes y los omite; si la carpeta
+data\bronze esta vacia, descarga las fuentes y puede tardar varios minutos.
+Conviene hacer la primera ejecucion completa antes de grabar. No borrar los
+Parquet unicamente para la grabacion. El pipeline crea/actualiza muestras
+CSV en data\sample.
+
+CAPTURA 5 - pipeline:
+- En la terminal de VS Code, mostrar `python -m src.pipeline`, los extractores
+  integrados y el mensaje final "Listo". Si hay datos ya descargados, es normal
+  que aparezcan mensajes de omision.
+- Mostrar que se genero el resumen de la capa bronce y que las muestras se
+  exportaron.
+- Nombre sugerido: evidencia_06_pipeline.png
+
+CAPTURA 6 - pruebas:
+- Mostrar `python -m pytest` y el resultado exitoso de las pruebas.
+- Nombre sugerido: evidencia_07_pytest.png
+
+4. EXPLICACION DEL CODIGO Y HALLAZGO DE PERFILAMIENTO
+
+Cada estudiante debe preparar SU explicacion, centrada en el rol y el codigo
+que construyo. Referencias del proyecto:
+- Rangos, URLs y metricas: src\config.py
+- Catalogo XM ListadoRecursos y aplanamiento de ListEntities: src\extract\xm.py
+- Aportes diarios AporEner (fuente propia): src\extract\xm_aportes.py
+- Temperaturas diarias agregadas con SoQL: src\extract\ideam_temperatura.py
+- Orquestacion y muestras: src\pipeline.py
+- Pruebas: tests\test_pipeline.py
+- Hallazgos y cifras: docs\perfilamiento.md
+
+Elegir un hallazgo del perfilamiento y decir la cifra y lo que implica. Por
+ejemplo: "Encontramos 32 filas duplicadas exactas en EnerAndes 2023; debemos
+revisarlas en la capa plata para evitar doble conteo". Usar un dato real de
+docs\perfilamiento.md y explicar brevemente por que importa.
+
+CAPTURA 8 - codigo:
+- Mostrar en VS Code el archivo y la funcion especifica que explica el
+  estudiante. Evitar tomar una imagen de codigo sin explicar su aporte.
+- Nombre sugerido: evidencia_08_codigo_[nombre].png
+
+CAPTURA 9 - perfilamiento:
+- Mostrar docs\perfilamiento.md con la tabla del archivo elegido y el hallazgo
+  con su evidencia numerica.
+- Nombre sugerido: evidencia_09_perfilamiento_[nombre].png
+
+5. VIDEO INDIVIDUAL (MAXIMO 5 MINUTOS)
+
+Grabar un video separado por estudiante, incluyendo pantalla y narracion:
+
+0:00-0:20  Presentacion, nombre, rol y breve objetivo del proyecto.
+0:20-1:00  Mostrar VS Code, Python y el entorno virtual.
+1:00-1:45  Ejecutar `python -m src.pipeline` y mostrar el resultado final.
+1:45-3:15  Explicar el archivo/funcion que construyo el estudiante y su rol.
+3:15-4:15  Mostrar un hallazgo real de docs\perfilamiento.md y su evidencia.
+4:15-4:40  Mostrar `python -m pytest` y cerrar con el resultado.
+
+Duracion objetivo: 4 minutos 40 segundos para dejar margen bajo el limite de
+5 minutos. Cada estudiante debe ejecutar el comando en su propia grabacion.
+La ejecucion completa puede tardar mas de cinco minutos: si el pipeline ya se
+ejecuto correctamente antes, repetir el comando durante la grabacion para
+mostrar la ejecucion que omite los archivos existentes y termina rapidamente.
+Subir el video a YouTube, Drive o GitHub con permisos de acceso comprobados.
+Probar el enlace en una ventana privada o sin iniciar sesion.
+
+6. COMPLETAR EL README.md
+
+Revisar que README.md incluya y actualice:
+
+[ ] Objetivo del proyecto.
+[ ] Nombres de todos los integrantes, usuarios GitHub y roles asignados.
+[ ] Fuentes de datos y archivos producidos, incluida la fuente propia AporEner.
+[ ] Pasos para instalar y ejecutar el pipeline, las consultas y pytest.
+[ ] Capturas de la consola y del trabajo del equipo. Las imagenes deben estar
+    guardadas en el repositorio (por ejemplo, en docs\evidencias\) y enlazadas
+    con rutas relativas en Markdown.
+[ ] Enlaces individuales a los videos de TODOS los integrantes.
+[ ] Una descripcion breve de que hizo cada integrante, consistente con su rol.
+
+Ejemplos de Markdown que pueden adaptar:
+
+    ## Evidencias
+    ![Pipeline ejecutado en VS Code](docs/evidencias/evidencia_06_pipeline.png)
+
+    ## Videos de sustentacion
+    - [Nombre Apellido - Data Engineer](URL_VIDEO)
+
+Guardar solo capturas necesarias; ocultar claves, datos privados, notificaciones
+y cualquier informacion personal que no deba publicarse.
+
+7. ARCHIVO ZIP PARA LA PLATAFORMA (INCLUIR .git)
+
+El ZIP debe contener la carpeta del proyecto y su historial `.git`, pero no
+debe contener `.venv` ni `data\bronze`. No incluir bases de datos, caches o
+descargas innecesarias. La carpeta data\sample si debe incluirse.
+
+En Windows, una forma segura es crear una carpeta temporal nueva y copiar el
+proyecto excluyendo solo las dos carpetas indicadas. Desde PowerShell, parado
+en la raiz del repositorio, adaptar y ejecutar:
+
+    $origen = (Get-Location).Path
+    $staging = Join-Path $env:TEMP "pi4-observatorio-entrega"
+    $destino = Join-Path $staging "pi4-observatorio-energia"
+    New-Item -ItemType Directory -Force -Path $destino | Out-Null
+    robocopy $origen $destino /E /XD "$origen\.venv" "$origen\data\bronze"
+
+Robocopy puede devolver codigos 0 a 7 cuando la copia fue correcta. Luego
+crear el ZIP fuera de la carpeta staging; Get-ChildItem -Force permite incluir
+la carpeta oculta `.git`:
+
+    $zip = Join-Path $env:USERPROFILE "Desktop\pi4-observatorio-entrega.zip"
+    Compress-Archive -Path (Get-ChildItem -Force $destino | ForEach-Object { $_.FullName }) -DestinationPath $zip -Force
+
+Antes de subir, abrir el ZIP y comprobar:
+[ ] Existe la carpeta `.git` dentro de la carpeta del proyecto.
+[ ] NO existe `.venv`.
+[ ] NO existe `data\bronze`.
+[ ] Existen README.md, src, tests, docs\perfilamiento.md y data\sample.
+[ ] El archivo ZIP se puede abrir y su tamano parece razonable.
+
+No compartir el ZIP por un enlace publico si contiene datos internos de
+EnerAndes. Para la plataforma, seguir la politica de entrega del curso.
+
+8. TEXTO PARA PEGAR EN LOS COMENTARIOS DE LA TAREA
+
+Reemplazar los campos y pegar un bloque individual por estudiante:
+
+    Repositorio del equipo: [URL_PUBLICA_DEL_REPOSITORIO]
+    Tag de entrega: ea1
+    Video individual: [URL_DEL_VIDEO]
+    Estudiante: [NOMBRE Y APELLIDO]
+    Usuario GitHub: [@USUARIO]
+    Rol en el equipo: [DATA ENGINEER / DATA QUALITY ANALYST /
+                       ANALYTICS ENGINEER / BI ANALYST]
+    Que construyo: [DESCRIBIR EN 2-4 FRASES EL CODIGO Y APORTE PROPIO]
+    Pull Request propio: [URL_DE_LA_PR]
+    ZIP del proyecto: [ARCHIVO ADJUNTO]
+
+LISTA FINAL ANTES DE ENTREGAR
+
+[ ] Repositorio publico; etiqueta `ea1` visible.
+[ ] Historial personal cumple minimo 3 commits y 1 PR propio.
+[ ] README completo: equipo, roles, fuentes, pasos, capturas y todos los videos.
+[ ] Video de cada integrante dura menos de 5 minutos y se puede abrir.
+[ ] Cada integrante ejecuta el pipeline, explica su codigo y muestra un hallazgo.
+[ ] ZIP incluye `.git`, pero excluye `.venv` y `data\bronze`.
+[ ] Comentarios de la plataforma tienen repositorio, video, rol y aporte propio.

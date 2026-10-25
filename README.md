@@ -6,7 +6,7 @@
 
 | Nombre | Usuario GitHub | Rol |
 |---|---|---|
-| | | Líder técnico / Data Engineer |
+| José David Cardona Mazo| josedav17 | Líder técnico / Data Engineer |
 | | | Data Quality Analyst |
 | | | Analytics Engineer |
 | | | BI Analyst / Storyteller |
@@ -19,10 +19,16 @@ Integrar datos del mercado eléctrico (XM), del clima (IDEAM y NOAA) y de ventas
 
 | Fuente | Tipo | Archivo en `data/bronze/` |
 |---|---|---|
-| XM – API Sinergox | API REST (POST, JSON) | `xm_precio_bolsa`, `xm_demanda`, `xm_embalses` |
-| IDEAM – datos.gov.co | API Socrata (SoQL) | `ideam_precipitacion_diaria` |
+| XM – API Sinergox | API REST (POST, JSON) | Precio de bolsa, demanda, embalses, generacion por recurso, catalogo de recursos y aportes hidricos |
+| IDEAM – datos.gov.co | API Socrata (SoQL) | Precipitacion y temperatura diaria por estacion |
 | NOAA – índice ONI | Archivo de texto | `noaa_oni` |
 | EnerAndes | Excel interno | `enerandes_ventas_2023` … `enerandes_ventas_2026` |
+
+### Fuente propia del equipo: aportes hídricos de XM
+
+El extractor `src/extract/xm_aportes.py` consulta `AporEner` en el endpoint diario de la API Sinergox de XM (entidad `Sistema`). Se agrega al rango del mercado eléctrico y se guarda como `xm_aportes_hidricos`. Este indicador mide los aportes de agua al sistema y permitirá contrastar la disponibilidad hídrica con la generación y el comportamiento de los embalses. El catálogo `ListadoRecursos` se consulta aparte en el endpoint `lists`, sin fechas, y se aplana desde `ListEntities`.
+
+IDEAM se consulta en ventanas semanales con filtros de Antioquia y fechas, y cada resultado se agrega por día y estación mediante SoQL en el servidor. Temperatura media, mínima y máxima se calculan sobre las observaciones del dataset `sbwg-7ju4`.
 
 ## ⚙️ Cómo ejecutar
 
@@ -30,12 +36,15 @@ Integrar datos del mercado eléctrico (XM), del clima (IDEAM y NOAA) y de ventas
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-# copiar ventas_enerandes_2023_2026.xlsx en data/insumos/
-python -m src.pipeline          # descarga las 4 fuentes a data/bronze/ (unos 3 minutos)
+# ubicar ventas_enerandes_2023_2026.xlsx en data/insumos/
+python -m src.pipeline          # descarga a data/bronze/ y crea muestras CSV
 python -m src.consultar         # consultas SQL de BI con DuckDB
+python -m pytest                # pruebas automáticas
 ```
 
-Para volver a descargar todo: `python -m src.pipeline --forzar`. El rango de fechas se cambia en `src/config.py`.
+XM se consulta desde el 1 de enero de 2024 hasta el 30 de septiembre de 2026; IDEAM desde el 1 de enero de 2025 hasta la fecha final. El archivo Excel de EnerAndes debe estar disponible en `data/insumos/ventas_enerandes_2023_2026.xlsx`.
+
+El pipeline omite archivos Parquet existentes. Para volver a descargar todo: `python -m src.pipeline --forzar`. Las muestras de las primeras 200 filas de cada Parquet se escriben en `data/sample/`; los datos completos de `data/bronze/` no se versionan. El perfilamiento y sus hallazgos están en `docs/perfilamiento.md`.
 
 ## 🏗️ Arquitectura
 
@@ -46,3 +55,8 @@ Fuentes -> BRONCE (dato tal cual + linaje) -> PLATA (limpio) -> ORO (modelo estr
 ## 🤖 Uso de IA
 
 (Declarar aquí qué herramientas de IA se usaron y para qué.)
+
+
+## 🤖 EVIDENCIAS
+
+![alt text](/Evidencias/image.png)
