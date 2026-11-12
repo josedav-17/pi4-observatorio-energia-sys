@@ -1,0 +1,86 @@
+version: 2
+
+models:
+  - name: dim_fecha
+    description: "Grano: una fila por día calendario entre los años cubiertos por ventas."
+    columns:
+      - name: fecha_key
+        tests: [unique, not_null]
+      - name: fecha
+        tests: [unique, not_null]
+      - name: anio
+        tests: [not_null]
+  - name: dim_municipio
+    description: "Grano: un código municipal DIVIPOLA; nombres de venta sin correspondencia se conservan marcados como no DIVIPOLA."
+    columns:
+      - name: codigo_municipio
+        tests: [unique, not_null]
+      - name: municipio_key
+        tests: [not_null]
+  - name: dim_recurso
+    description: "Grano: un recurso/planta XM identificado por código de recurso."
+    columns:
+      - name: codigo_recurso
+        tests: [unique, not_null]
+      - name: recurso
+        tests: [not_null]
+  - name: dim_estacion
+    description: "Grano: una estación IDEAM identificada por código de estación."
+    columns:
+      - name: codigo_estacion
+        tests: [unique, not_null]
+  - name: dim_enso
+    description: "Grano: un mes central de ONI, con índice y fase ENSO."
+    columns:
+      - name: enso_key
+        tests: [unique, not_null]
+      - name: mes
+        tests: [unique, not_null]
+      - name: fase_enso
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["El Niño", "La Niña", "Neutral"]
+  - name: fact_ventas_mensual
+    description: "Grano: mes, municipio, segmento de cliente y tipo de compra."
+    columns:
+      - name: fecha_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_fecha')
+              field: fecha_key
+      - name: municipio_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_municipio')
+              field: codigo_municipio
+      - name: energia_kwh
+        tests: [not_null]
+  - name: fact_mercado_horario
+    description: "Grano: una hora del sistema eléctrico nacional por fecha."
+    columns:
+      - name: fecha_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_fecha')
+              field: fecha_key
+      - name: hora
+        tests: [not_null]
+  - name: fact_generacion_recurso
+    description: "Grano: fecha, hora y recurso generador XM."
+    columns:
+      - name: fecha_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_fecha')
+              field: fecha_key
+      - name: recurso_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_recurso')
+              field: codigo_recurso

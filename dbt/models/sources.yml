@@ -1,0 +1,28 @@
+version: 2
+
+sources:
+  - name: silver
+    schema: main
+    tables:
+      - name: enerandes_ventas_mensual
+        meta: {external_location: "read_parquet('{{ env_var('EA2_SILVER_DIR') }}/enerandes_ventas_mensual.parquet')"}
+      - name: xm_precio_bolsa_horario
+        meta: {external_location: "read_parquet('{{ env_var('EA2_SILVER_DIR') }}/xm_precio_bolsa_horario.parquet')"}
+      - name: xm_demanda_horaria
+        meta: {external_location: "read_parquet('{{ env_var('EA2_SILVER_DIR') }}/xm_demanda_horaria.parquet')"}
+      - name: xm_embalses_diario
+        meta: {external_location: "read_parquet('{{ env_var('EA2_SILVER_DIR') }}/xm_embalses_diario.parquet')"}
+      - name: xm_aportes_hidricos_diario
+        meta: {external_location: "read_parquet('{{ env_var('EA2_SILVER_DIR') }}/xm_aportes_hidricos_diario.parquet')"}
+      - name: xm_generacion_recurso_horario
+        meta: {external_location: "read_parquet('{{ env_var('EA2_SILVER_DIR') }}/xm_generacion_recurso_horario.parquet')"}
+      - name: xm_listado_recursos
+        meta: {external_location: "read_parquet('{{ env_var('EA2_SILVER_DIR') }}/xm_listado_recursos.parquet')"}
+      - name: ideam_precipitacion_diaria
+        meta: {external_location: "read_parquet('{{ env_var('EA2_SILVER_DIR') }}/ideam_precipitacion_diaria.parquet')"}
+      - name: ideam_temperatura_diaria
+        meta: {external_location: "read_parquet('{{ env_var('EA2_SILVER_DIR') }}/ideam_temperatura_diaria.parquet')"}
+      - name: noaa_oni_mensual
+        meta: {external_location: "read_parquet('{{ env_var('EA2_SILVER_DIR') }}/noaa_oni_mensual.parquet')"}
+      - name: divipola_municipios
+        meta: {external_location: "read_parquet('{{ env_var('EA2_SILVER_DIR') }}/divipola_municipios.parquet')"}

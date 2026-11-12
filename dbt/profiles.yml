@@ -1,0 +1,7 @@
+observatorio_energia:
+  target: local
+  outputs:
+    local:
+      type: duckdb
+      path: "{{ env_var('EA2_DUCKDB_PATH') }}"
+      threads: 4
