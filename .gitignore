@@ -5,6 +5,8 @@
 data/bronze/
 data/silver/
 data/gold/
+dbt/target/
+dbt/logs/
 *.duckdb
 
 # Secretos y configuracion local

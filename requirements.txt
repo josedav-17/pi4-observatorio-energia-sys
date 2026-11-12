@@ -4,3 +4,5 @@ pyarrow>=17.0
 openpyxl>=3.1
 duckdb>=1.1
 pytest>=8.0
+pandera>=0.21,<0.27
+dbt-duckdb>=1.8,<2.0
