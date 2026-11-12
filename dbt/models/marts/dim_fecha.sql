@@ -2,7 +2,7 @@ with calendario as (
     select cast(dia as date) as fecha
     from generate_series(
         (select date_trunc('year', min(fecha))::date from {{ ref('stg_enerandes_ventas_mensual') }}),
-        (select date_trunc('year', max(fecha))::date + interval '1 year - 1 day'
+        (select (date_trunc('year', max(fecha)) + interval '1 year' - interval '1 day')::date
          from {{ ref('stg_enerandes_ventas_mensual') }}),
         interval 1 day
     ) as serie(dia)

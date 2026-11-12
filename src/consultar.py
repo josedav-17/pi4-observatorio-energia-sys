@@ -1,28 +1,20 @@
-"""
-Ejecuta las consultas SQL de la carpeta consultas/ con DuckDB, directo sobre Parquet.
+import os
+import duckdb
 
-Uso:
-    python -m src.consultar
-"""
-# ---------------------------------------------------------------------------
-# IMPORTS
-# ---------------------------------------------------------------------------
-import os       # os: funciones del sistema operativo; os.chdir() cambia de carpeta
-
-import duckdb   # duckdb: motor SQL que lee archivos Parquet sin base de datos
-
-from src import config       # configuracion central (para saber la carpeta raiz)
-from src.utils import log    # mensajes con hora
+from src import config
+from src.utils import log
 
 
 def main() -> None:
-    os.chdir(config.RAIZ)               # las rutas de los .sql son relativas a la raiz
-    con = duckdb.connect()              # base de datos en memoria: no crea archivos
-    for archivo in sorted((config.RAIZ / "consultas").glob("*.sql")):   # cada .sql, en orden
+    # Necesario porque las rutas dentro de los .sql son relativas a la raíz del proyecto
+    os.chdir(config.RAIZ)
+    con = duckdb.connect()
+
+    for archivo in sorted((config.RAIZ / "consultas").glob("*.sql")):
         log(f"Consulta: {archivo.name}")
-        sql = archivo.read_text(encoding="utf-8")          # el texto de la consulta
-        print(con.sql(sql).df().to_string(index=False))    # ejecutar, pasar a tabla y mostrar
-        print()                                            # linea en blanco
+        sql = archivo.read_text(encoding="utf-8")
+        print(con.sql(sql).df().to_string(index=False))
+        print()
 
 
 if __name__ == "__main__":

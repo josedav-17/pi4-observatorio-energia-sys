@@ -1,360 +1,688 @@
-"""Limpieza, cuarentena y validación Pandera de fuentes en bronce."""
 from __future__ import annotations
 
 import re
 import unicodedata
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pandera.errors
 
 from src import config
 from src.quality.schemas import SCHEMAS
 
-HOUR_COLUMNS = [f"Hour{i:02d}" for i in range(1, 25)]
-MUNICIPALITY_FIXES = {
+COLUMNAS_HORA = [f"Hour{i:02d}" for i in range(1, 25)]
+
+CORRECCIONES_MUNICIPIO = {
     "MEDELIN": "MEDELLIN",
     "MEDELLINN": "MEDELLIN",
+    "MEDELL N": "MEDELLIN",
+    "MEDELLIN D E": "MEDELLIN",
+    "APARTAD": "APARTADO",
+    "RIONEGRO ANT": "RIONEGRO",
     "RIONEGRO ANTIOQUIA": "RIONEGRO",
+    "RIO NEGRO": "RIONEGRO",
     "SANTAFE DE ANTIOQUIA": "SANTA FE DE ANTIOQUIA",
+    "STA FE DE ANTIOQUIA": "SANTA FE DE ANTIOQUIA",
     "EL RETIRO ANTIOQUIA": "EL RETIRO",
 }
-SPANISH_MONTHS = {
+
+MESES = {
     "ene": 1, "feb": 2, "mar": 3, "abr": 4, "may": 5, "jun": 6,
     "jul": 7, "ago": 8, "sep": 9, "oct": 10, "nov": 11, "dic": 12,
+    "jan": 1, "apr": 4, "aug": 8, "dec": 12,
 }
 
+_EJECUCION_ACTIVA: EjecucionCalidad
 
-class QualityRun:
+
+class EjecucionCalidad:
     def __init__(self) -> None:
         self.stats: dict[str, dict[str, int]] = {}
-        self.quarantines: dict[str, list[pd.DataFrame]] = {}
+        self.cuarentenas: dict[str, list[pd.DataFrame]] = {}
+        self.metricas_reglas: list[dict[str, object]] = []
 
-    def quarantine(self, source: str, rows: pd.DataFrame, reason: str) -> None:
-        if rows.empty:
+    def enviar_cuarentena(self, fuente: str, filas: pd.DataFrame, motivo: str) -> None:
+        if filas.empty:
             return
-        out = rows.copy()
-        out["motivo"] = reason
-        self.quarantines.setdefault(source, []).append(out)
+        salida = filas.copy()
+        salida["motivo"] = motivo
+        self.cuarentenas.setdefault(fuente, []).append(salida)
 
-    def save(self, table: str, df: pd.DataFrame, source: str, input_rows: int) -> None:
+    def registrar_regla(self, fuente: str, problema: str, regla: str, antes: int, despues: int) -> None:
+        self.metricas_reglas.append({
+            "fuente": fuente,
+            "problema": problema,
+            "regla": regla,
+            "antes": int(antes),
+            "despues": int(despues),
+        })
+
+    def guardar(
+        self, tabla: str, df: pd.DataFrame, fuente: str, filas_entrada: int,
+        fuera_alcance: int = 0,
+    ) -> None:
         df = df.reset_index(drop=True)
-        SCHEMAS[table].validate(df, lazy=True)
-        target = config.RAIZ / "data" / "silver" / f"{table}.parquet"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        df.to_parquet(target, index=False)
-        self.stats[source] = {
-            "antes": int(input_rows),
+        SCHEMAS[tabla].validate(df, lazy=True)
+        destino = config.RAIZ / "data" / "silver" / f"{tabla}.parquet"
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(destino, index=False)
+        self.stats[fuente] = {
+            "antes": int(filas_entrada),
             "despues": int(len(df)),
-            "cuarentena": sum(len(x) for x in self.quarantines.get(source, [])),
+            "cuarentena": sum(len(x) for x in self.cuarentenas.get(fuente, [])),
+            "fuera_alcance": int(fuera_alcance),
         }
 
-    def write_quarantines(self) -> None:
-        folder = config.RAIZ / "data" / "silver"
-        folder.mkdir(parents=True, exist_ok=True)
-        for source, parts in self.quarantines.items():
-            path = folder / f"cuarentena_{source}.parquet"
-            pd.concat(parts, ignore_index=True, sort=False).to_parquet(path, index=False)
+    def escribir_cuarentenas(self) -> None:
+        carpeta = config.RAIZ / "data" / "silver"
+        carpeta.mkdir(parents=True, exist_ok=True)
+        for fuente, partes in self.cuarentenas.items():
+            ruta = carpeta / f"cuarentena_{fuente}.parquet"
+            pd.concat(partes, ignore_index=True, sort=False).to_parquet(ruta, index=False)
+
+    def resumen_cuarentenas(self) -> dict[str, dict[str, int]]:
+        return {
+            fuente: {
+                str(motivo): int(conteo)
+                for motivo, conteo in pd.concat(partes, ignore_index=True)["motivo"]
+                .value_counts(dropna=False).items()
+            }
+            for fuente, partes in self.cuarentenas.items()
+        }
 
 
-def _read(name: str) -> pd.DataFrame:
-    path = config.DIR_BRONZE / f"{name}.parquet"
-    if not path.exists():
-        raise FileNotFoundError(f"Falta fuente bronce requerida: {path}")
-    return pd.read_parquet(path)
+def _leer(nombre: str) -> pd.DataFrame:
+    ruta = config.DIR_BRONZE / f"{nombre}.parquet"
+    if not ruta.exists():
+        raise FileNotFoundError(f"Falta fuente bronce requerida: {ruta}")
+    return pd.read_parquet(ruta)
 
 
-def _normal(value) -> str:
-    if pd.isna(value):
+def _normalizar(valor) -> str:
+    if pd.isna(valor):
         return ""
-    text = unicodedata.normalize("NFKD", str(value))
-    text = "".join(c for c in text if not unicodedata.combining(c))
-    return re.sub(r"[^A-Z0-9]+", " ", text.upper()).strip()
+    texto = unicodedata.normalize("NFKD", str(valor))
+    texto = "".join(c for c in texto if not unicodedata.combining(c))
+    return re.sub(r"[^A-Z0-9]+", " ", texto.upper()).strip()
 
 
-def _municipality(value) -> str:
-    key = _normal(value)
-    key = MUNICIPALITY_FIXES.get(key, key)
-    return " ".join(word.capitalize() for word in key.split())
+def _limpiar_municipio(valor) -> str:
+    clave = _normalizar(valor)
+    clave = CORRECCIONES_MUNICIPIO.get(clave, clave)
+    return " ".join(palabra.capitalize() for palabra in clave.split())
 
 
-def _numeric(series: pd.Series) -> pd.Series:
-    text = series.astype("string").str.strip().str.replace(",", ".", regex=False)
-    return pd.to_numeric(text, errors="coerce")
+def _a_numerico(serie: pd.Series) -> pd.Series:
+    texto = serie.astype("string").str.strip().str.replace(",", ".", regex=False)
+    return pd.to_numeric(texto, errors="coerce")
 
 
-def _parse_month(value):
-    if pd.isna(value):
+def _energia_a_kwh(valores: pd.Series, unidades: pd.Series) -> tuple[pd.Series, pd.Series]:
+    energia = _a_numerico(valores)
+    unidad_norm = unidades.map(_normalizar)
+    es_mwh = unidad_norm.isin(["MWH", "MEGAWATT HORA", "MEGAWATT HOUR"])
+    es_kwh = unidad_norm.isin(["KWH", "KILOWATT HORA", "KILOWATT HOUR"])
+    energia.loc[es_mwh] *= 1000
+    return energia, ~(es_mwh | es_kwh)
+
+
+def _parsear_mes(valor):
+    if pd.isna(valor):
         return pd.NaT
-    text = str(value).strip().lower().replace(".", "")
-    text = re.sub(r"\s+", "", text)
-    match = re.fullmatch(r"(\d{1,2})/(\d{4})", text)
-    if match:
-        month, year = map(int, match.groups())
-        return pd.Timestamp(year, month, 1) if 1 <= month <= 12 else pd.NaT
-    match = re.fullmatch(r"(\d{4})-(\d{1,2})", text)
-    if match:
-        year, month = map(int, match.groups())
-        return pd.Timestamp(year, month, 1) if 1 <= month <= 12 else pd.NaT
-    match = re.fullmatch(r"([a-zñ]{3})[-/](\d{2,4})", text)
-    if match and match.group(1)[:3] in SPANISH_MONTHS:
-        month, year = SPANISH_MONTHS[match.group(1)[:3]], int(match.group(2))
-        year = year + (2000 if year < 70 else 1900) if year < 100 else year
-        return pd.Timestamp(year, month, 1)
-    parsed = pd.to_datetime(text, errors="coerce", dayfirst=True, format="mixed")
-    if pd.isna(parsed):
+    texto = str(valor).strip().lower().replace(".", "")
+    texto = re.sub(r"\s+", "", texto)
+
+    m = re.fullmatch(r"(\d{1,2})/(\d{4})", texto)
+    if m:
+        mes, anio = map(int, m.groups())
+        return pd.Timestamp(anio, mes, 1) if 1 <= mes <= 12 else pd.NaT
+
+    m = re.fullmatch(r"(\d{4})-(\d{1,2})", texto)
+    if m:
+        anio, mes = map(int, m.groups())
+        return pd.Timestamp(anio, mes, 1) if 1 <= mes <= 12 else pd.NaT
+
+    m = re.fullmatch(r"([a-zñ]{3})[-/](\d{2,4})", texto)
+    if m and m.group(1)[:3] in MESES:
+        mes, anio = MESES[m.group(1)[:3]], int(m.group(2))
+        anio = anio + (2000 if anio < 70 else 1900) if anio < 100 else anio
+        return pd.Timestamp(anio, mes, 1)
+
+    fecha = pd.to_datetime(texto, errors="coerce", dayfirst=True, format="mixed")
+    if pd.isna(fecha) or fecha.year < 1900:
         return pd.NaT
-    return pd.Timestamp(parsed.year, parsed.month, 1)
+    return pd.Timestamp(fecha.year, fecha.month, 1)
 
 
-def _sales_headers(raw: pd.DataFrame):
-    aliases = {
-        "fecha": ("FECHA", "PERIODO", "MES"),
-        "municipio": ("MUNICIPIO", "MUNICIPIO DE VENTA"),
-        "segmento": ("SEGMENTO", "SEGMENTO CLIENTE"),
-        "tipo_compra": ("TIPO COMPRA", "MODALIDAD", "TIPO DE COMPRA"),
-        "energia": ("ENERGIA KWH", "ENERGIA", "CONSUMO KWH"),
+def _detectar_encabezados_ventas(crudo: pd.DataFrame):
+    alias_cols = {
+        "fecha": ("FECHA", "PERIODO", "MES", "FECHA CORTE"),
+        "municipio": ("MUNICIPIO", "MUNICIPIO DE VENTA", "CIUDAD"),
+        "segmento": ("SEGMENTO", "SEGMENTO CLIENTE", "TIPO CLIENTE"),
+        "tipo_compra": ("TIPO COMPRA", "MODALIDAD", "TIPO DE COMPRA", "COMPRA"),
+        "energia": ("ENERGIA KWH", "ENERGIA", "CONSUMO KWH", "KWH"),
         "unidad": ("UNIDAD",),
-        "valor": ("VALOR COP", "VALOR", "VALOR $"),
-        "clientes": ("CLIENTES", "NUM CLIENTES", "NUMERO CLIENTES"),
+        "valor": ("VALOR COP", "VALOR", "VALOR $", "FACTURADO", "TOTAL FACTURADO COP"),
+        "clientes": ("CLIENTES", "NUM CLIENTES", "NUMERO CLIENTES", "USUARIOS", "CLIENTES ACTIVOS"),
     }
-    for row_index in range(min(25, len(raw))):
-        vals = [_normal(v) for v in raw.iloc[row_index].tolist()]
-        found = {}
-        for field, variants in aliases.items():
-            for idx, val in enumerate(vals):
-                if any(val == _normal(alias) or val.startswith(_normal(alias) + " ") for alias in variants):
-                    found[field] = idx
+    for idx_fila in range(min(25, len(crudo))):
+        valores = [_normalizar(v) for v in crudo.iloc[idx_fila].tolist()]
+        encontrados = {}
+        for campo, variantes in alias_cols.items():
+            for idx_col, val in enumerate(valores):
+                if any(val == _normalizar(a) or val.startswith(_normalizar(a) + " ") for a in variantes):
+                    encontrados[campo] = idx_col
                     break
-        if {"fecha", "municipio", "energia"}.issubset(found):
-            return row_index, found
+        if {"fecha", "municipio", "energia"}.issubset(encontrados):
+            return idx_fila, encontrados
     raise ValueError("No se encontró encabezado de columnas reconocible en la hoja EnerAndes")
 
 
-def clean_sales(run: QualityRun) -> None:
-    frames, total = [], 0
-    for year in range(2023, 2027):
-        raw = _read(f"enerandes_ventas_{year}")
-        total += len(raw)
+def limpiar_ventas(ejecucion: EjecucionCalidad) -> None:
+    partes, total = [], 0
+    divipola = pd.read_parquet(config.RAIZ / "data" / "silver" / "divipola_municipios.parquet")
+    codigos_municipio = dict(zip(divipola["municipio_key"], divipola["codigo_municipio"]))
+
+    for anio in range(2023, 2027):
+        crudo = _leer(f"enerandes_ventas_{anio}")
+        total += len(crudo)
         try:
-            header_row, positions = _sales_headers(raw)
+            fila_encabezado, posiciones = _detectar_encabezados_ventas(crudo)
         except ValueError:
-            run.quarantine("enerandes", raw, "No se detectó una fila de encabezados válida")
+            ejecucion.enviar_cuarentena("enerandes", crudo, "No se detectó una fila de encabezados válida")
+            ejecucion.registrar_regla(
+                "enerandes", "Encabezado ausente o irreconocible",
+                "Detectar encabezados en las primeras 25 filas; hoja sin encabezado válido a cuarentena.",
+                len(crudo), 0,
+            )
             continue
-        part = pd.DataFrame()
-        for field, idx in positions.items():
-            part[field] = raw.iloc[header_row + 1 :, idx].to_numpy()
-        for field, fallback in (("segmento", "No informado"), ("tipo_compra", "No informado"),
-                                ("valor", None), ("clientes", None), ("unidad", None)):
-            if field not in part:
-                part[field] = fallback
-        part["fecha"] = part["fecha"].map(_parse_month)
-        part["municipio"] = part["municipio"].map(_municipality)
-        part["municipio_key"] = part["municipio"].map(_normal)
-        part["segmento"] = part["segmento"].fillna("No informado").astype(str).str.strip()
-        part["tipo_compra"] = part["tipo_compra"].fillna("No informado").astype(str).str.strip()
-        part["energia_kwh"] = _numeric(part["energia"])
-        if year == 2024:
-            unit = part["unidad"].fillna("MWh").map(_normal)
-            part.loc[unit.isin(["MWH", "MEGAWATT HORA", "MEGAWATT HOUR"]), "energia_kwh"] *= 1000
-        part["valor_cop"] = _numeric(part["valor"]).fillna(0)
-        part["clientes"] = _numeric(part["clientes"]).fillna(0).round().astype("Int64")
-        bad = part["fecha"].isna() | part["municipio_key"].eq("") | part["energia_kwh"].isna()
-        reason = np.select(
-            [part["fecha"].isna(), part["municipio_key"].eq(""), part["energia_kwh"].isna(),
-             part["energia_kwh"].lt(0) | part["valor_cop"].lt(0)],
-            ["Fecha inválida o nota/título", "Municipio vacío", "Energía o valor no numérico",
+
+        ejecucion.registrar_regla(
+            "enerandes", f"Hoja {anio}: encabezados en posiciones distintas",
+            "Buscar la fila de encabezado por nombres de columnas, no por una posición fija.",
+            len(crudo), len(crudo) - fila_encabezado - 1,
+        )
+        ejecucion.enviar_cuarentena("enerandes", crudo.iloc[:fila_encabezado], "Título o nota anterior a los encabezados")
+        ejecucion.enviar_cuarentena("enerandes", crudo.iloc[[fila_encabezado]], "Fila de encabezado")
+
+        filas_datos = crudo.iloc[fila_encabezado + 1 :].reset_index(drop=True)
+        if filas_datos.empty:
+            es_total = pd.Series(False, index=filas_datos.index)
+        else:
+            es_total = filas_datos.astype("string").apply(
+                lambda col: col.str.contains(r"\btotal\b|\bsubtotal\b", case=False, na=False)
+            ).any(axis=1)
+
+        ejecucion.enviar_cuarentena("enerandes", filas_datos.loc[es_total], "Fila de total o subtotal")
+        ejecucion.registrar_regla(
+            "enerandes", f"Hoja {anio}: filas de totales mezcladas con observaciones",
+            "Excluir las filas TOTAL/SUBTOTAL del conjunto analítico y conservarlas en cuarentena.",
+            len(filas_datos), len(filas_datos) - int(es_total.sum()),
+        )
+        filas_datos = filas_datos.loc[~es_total].reset_index(drop=True)
+
+        bloque = pd.DataFrame()
+        for campo, idx in posiciones.items():
+            bloque[campo] = filas_datos.iloc[:, idx].to_numpy()
+
+        for campo, defecto in (
+            ("segmento", "No informado"), ("tipo_compra", "No informado"),
+            ("valor", None), ("clientes", None), ("unidad", None)
+        ):
+            if campo not in bloque:
+                bloque[campo] = defecto
+
+        bloque["fecha"] = pd.to_datetime(bloque["fecha"].map(_parsear_mes), errors="coerce")
+        bloque["municipio"] = bloque["municipio"].map(_limpiar_municipio)
+        bloque["municipio_key"] = bloque["municipio"].map(_normalizar)
+
+        antes = len(bloque)
+        fechas_validas = bloque["fecha"].notna()
+        ejecucion.registrar_regla(
+            "enerandes", f"Hoja {anio}: formatos de fecha mixtos",
+            "Interpretar formatos mixtos y llevar la fecha al primer día del mes; fechas inválidas a cuarentena.",
+            antes, int(fechas_validas.sum()),
+        )
+
+        municipios_validos = bloque["municipio_key"].ne("")
+        ejecucion.registrar_regla(
+            "enerandes", f"Hoja {anio}: nombres de municipio vacíos o mal escritos",
+            "Normalizar tildes y alias; resolver el nombre canónico con el código DIVIPOLA de Antioquia.",
+            antes, int(municipios_validos.sum()),
+        )
+
+        bloque["codigo_municipio"] = bloque["municipio_key"].map(codigos_municipio)
+        bloque["segmento"] = bloque["segmento"].fillna("No informado").astype(str).str.strip().map(
+            lambda v: {"IND": "Industrial", "INDUSTRIAL": "Industrial"}.get(_normalizar(v), v)
+        )
+        bloque["tipo_compra"] = bloque["tipo_compra"].fillna("No informado").astype(str).str.strip().map(
+            lambda v: {"CONTRATOS": "Contrato", "CONTRATO": "Contrato", "BOLSA": "Bolsa"}.get(_normalizar(v), v)
+        )
+
+        bloque["energia_kwh"] = _a_numerico(bloque["energia"])
+        unidad_invalida = pd.Series(False, index=bloque.index)
+        if anio == 2024:
+            bloque["energia_kwh"], unidad_invalida = _energia_a_kwh(bloque["energia"], bloque["unidad"])
+            ejecucion.registrar_regla(
+                "enerandes", f"Hoja {anio}: unidades de energía faltantes o no reconocidas",
+                "Convertir MWh a kWh y conservar kWh; las demás unidades se envían a cuarentena.",
+                len(bloque), int((~unidad_invalida).sum()),
+            )
+
+        bloque["valor_cop"] = _a_numerico(bloque["valor"])
+        bloque["clientes"] = _a_numerico(bloque["clientes"])
+
+        sin_fecha = bloque["fecha"].isna()
+        sin_municipio = bloque["municipio_key"].eq("")
+        sin_divipola = bloque["codigo_municipio"].isna()
+        sin_energia = bloque["energia_kwh"].isna()
+        sin_valor = bloque["valor_cop"].isna()
+        sin_clientes = bloque["clientes"].isna()
+        negativo = (
+            bloque["energia_kwh"].lt(0) | bloque["valor_cop"].lt(0) | bloque["clientes"].lt(0)
+        ).fillna(False)
+
+        motivo = np.select(
+            [sin_fecha, sin_municipio, sin_divipola, sin_energia,
+             sin_valor, sin_clientes, unidad_invalida, negativo],
+            ["Fecha inválida o fila sin fecha", "Municipio vacío", "Municipio sin correspondencia DIVIPOLA",
+             "Energía no numérica o vacía", "Valor facturado no numérico o vacío",
+             "Clientes no numéricos o vacíos", "Unidad de energía vacía o desconocida",
              "Medida negativa"],
             default="",
         )
-        negative = part["energia_kwh"].lt(0) | part["valor_cop"].lt(0)
-        invalid = bad | negative
-        source_rows = raw.iloc[header_row + 1 :].reset_index(drop=True)
-        for why in pd.unique(reason[invalid]):
-            run.quarantine("enerandes", source_rows.loc[reason == why], str(why))
-        clean = part.loc[~invalid, [
-            "fecha", "municipio", "municipio_key", "segmento", "tipo_compra",
+        invalido = (
+            sin_fecha | sin_municipio | sin_divipola | sin_energia
+            | sin_valor | sin_clientes | unidad_invalida | negativo
+        )
+
+        filas_origen = filas_datos.reset_index(drop=True)
+        for razon in pd.unique(motivo[invalido]):
+            ejecucion.enviar_cuarentena("enerandes", filas_origen.loc[motivo == razon], str(razon))
+
+        ejecucion.registrar_regla(
+            "enerandes", f"Hoja {anio}: valores vacíos o no numéricos",
+            "Exigir energía, valor facturado y cantidad de clientes; no reemplazar nulos por cero.",
+            antes, int((~(sin_energia | sin_valor | sin_clientes)).sum()),
+        )
+        ejecucion.registrar_regla(
+            "enerandes", f"Hoja {anio}: medidas negativas",
+            "Enviar energía, valor o clientes negativos a cuarentena.",
+            antes, int((~negativo).sum()),
+        )
+        ejecucion.registrar_regla(
+            "enerandes", f"Hoja {anio}: municipios sin código oficial",
+            "Unir por nombre normalizado al catálogo DIVIPOLA; no inventar códigos para los no resueltos.",
+            antes, int((~sin_divipola).sum()),
+        )
+
+        limpio = bloque.loc[~invalido, [
+            "fecha", "codigo_municipio", "municipio", "municipio_key", "segmento", "tipo_compra",
             "energia_kwh", "valor_cop", "clientes",
         ]].copy()
-        frames.append(clean)
-    result = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(
+        limpio["clientes"] = limpio["clientes"].round().astype("int64")
+        partes.append(limpio)
+
+    resultado = pd.concat(partes, ignore_index=True) if partes else pd.DataFrame(
         columns=SCHEMAS["enerandes_ventas_mensual"].columns
     )
-    dupes = result.duplicated(["fecha", "municipio_key", "segmento", "tipo_compra"], keep="first")
-    run.quarantine("enerandes", result.loc[dupes], "Registro mensual duplicado")
-    result = result.loc[~dupes].copy()
-    result["clientes"] = result["clientes"].astype("int64")
-    run.save("enerandes_ventas_mensual", result, "enerandes", total)
+    duplicados_exactos = resultado.duplicated(keep="first")
+    ejecucion.enviar_cuarentena("enerandes", resultado.loc[duplicados_exactos], "Registro exactamente duplicado")
+    ejecucion.registrar_regla(
+        "enerandes", "Filas exactamente duplicadas",
+        "Conservar una copia de cada duplicado exacto en cuarentena y mantener una sola en Plata.",
+        len(resultado), int((~duplicados_exactos).sum()),
+    )
+    resultado = resultado.loc[~duplicados_exactos].copy()
+
+    antes_agrupar = len(resultado)
+    resultado = resultado.groupby(
+        ["fecha", "codigo_municipio", "municipio", "municipio_key", "segmento", "tipo_compra"],
+        as_index=False,
+        dropna=False,
+    )[["energia_kwh", "valor_cop", "clientes"]].sum()
+    resultado["clientes"] = resultado["clientes"].astype("int64")
+
+    ejecucion.registrar_regla(
+        "enerandes", "Más de una fila válida para el mismo grano mensual",
+        "Consolidar sumando medidas por mes, municipio DIVIPOLA, segmento y modalidad.",
+        antes_agrupar, len(resultado),
+    )
+    ejecucion.guardar("enerandes_ventas_mensual", resultado, "enerandes", total)
 
 
-def _hourly(raw: pd.DataFrame, source: str, value_name: str, output: str,
-            value_range=None, code_column=False) -> pd.DataFrame:
-    dates = pd.to_datetime(raw["Date"], errors="coerce")
-    ids = raw.get("code", raw.get("Id", pd.Series("", index=raw.index))).fillna("").astype(str)
-    values = np.column_stack([_numeric(raw[col]).to_numpy(dtype=float, na_value=np.nan)
-                              for col in HOUR_COLUMNS])
-    n = len(raw)
-    expanded = pd.DataFrame({
-        "fecha": np.repeat(dates.to_numpy(), 24),
+def _despivotar_horario(
+    crudo: pd.DataFrame, fuente: str, nombre_valor: str, salida: str,
+    rango_valores=None, con_codigo=False
+) -> pd.DataFrame:
+    fechas = pd.to_datetime(crudo["Date"], errors="coerce")
+    ids = crudo.get("code", crudo.get("Id", pd.Series("", index=crudo.index))).fillna("").astype(str)
+    valores = np.column_stack([
+        _a_numerico(crudo[col]).to_numpy(dtype=float, na_value=np.nan)
+        for col in COLUMNAS_HORA
+    ])
+    n = len(crudo)
+    expandido = pd.DataFrame({
+        "fecha": np.repeat(fechas.to_numpy(), 24),
         "hora": np.tile(np.arange(1, 25), n),
-        value_name: values.reshape(-1),
+        nombre_valor: valores.reshape(-1),
     })
-    if code_column:
-        expanded["codigo_recurso"] = np.repeat(ids.to_numpy(), 24)
-    invalid = expanded["fecha"].isna() | expanded[value_name].isna()
-    if value_range:
-        invalid |= ~expanded[value_name].between(value_range[0], value_range[1])
-    if code_column:
-        invalid |= expanded["codigo_recurso"].str.strip().eq("")
-    reason = "Fecha, recurso o medida faltante/fuera de rango"
-    run = _ACTIVE_RUN
-    run.quarantine(source, expanded.loc[invalid], reason)
-    key = ["fecha", "hora"] + (["codigo_recurso"] if code_column else [])
-    result = expanded.loc[~invalid].drop_duplicates(key, keep="first").copy()
-    if code_column:
-        duplicates = expanded.loc[~invalid].duplicated(key, keep="first")
-        run.quarantine(source, expanded.loc[~invalid].loc[duplicates], "Registro horario duplicado")
-    run.save(output, result, source, len(raw) * 24)
-    return result
+    if con_codigo:
+        expandido["codigo_recurso"] = np.repeat(ids.to_numpy(), 24)
+
+    fecha_invalida = expandido["fecha"].isna()
+    valor_nulo = expandido[nombre_valor].isna()
+    fuera_rango = pd.Series(False, index=expandido.index)
+    if rango_valores:
+        fuera_rango = expandido[nombre_valor].notna() & ~expandido[nombre_valor].between(
+            rango_valores[0], rango_valores[1]
+        )
+    codigo_vacio = pd.Series(False, index=expandido.index)
+    if con_codigo:
+        codigo_vacio = expandido["codigo_recurso"].str.strip().eq("")
+
+    invalido = fecha_invalida | valor_nulo | fuera_rango | codigo_vacio
+    ejecucion = _EJECUCION_ACTIVA
+
+    motivo = np.select(
+        [fecha_invalida, codigo_vacio, valor_nulo, fuera_rango],
+        ["Fecha inválida", "Código de recurso vacío",
+         "Valor horario nulo o no numérico", "Valor horario fuera de rango"],
+        default="",
+    )
+    for razon in pd.unique(motivo[invalido]):
+        ejecucion.enviar_cuarentena(fuente, expandido.loc[motivo == razon], str(razon))
+
+    ejecucion.registrar_regla(
+        fuente, "24 columnas Hour01–Hour24 en formato ancho",
+        "Despivotar las 24 horas a una fila por fecha y hora.",
+        len(crudo), len(expandido),
+    )
+    horas_validas = expandido["hora"].between(1, 24)
+    ejecucion.registrar_regla(
+        fuente, "Hora comercial ausente o fuera del rango 1–24",
+        "Asignar las horas del nombre de columna Hour01–Hour24.",
+        len(expandido), int(horas_validas.sum()),
+    )
+    ejecucion.registrar_regla(
+        fuente, "Fechas, claves o medidas faltantes/no numéricas/fuera de rango",
+        "Conservar observaciones válidas y llevar cada rechazo a cuarentena con causa.",
+        len(expandido), int((~invalido).sum()),
+    )
+
+    clave = ["fecha", "hora"] + (["codigo_recurso"] if con_codigo else [])
+    validos = expandido.loc[~invalido]
+    resultado = validos.drop_duplicates(clave, keep="first").copy()
+    duplicados = validos.duplicated(clave, keep="first")
+
+    ejecucion.enviar_cuarentena(fuente, validos.loc[duplicados], "Registro horario duplicado")
+    ejecucion.registrar_regla(
+        fuente, "Claves fecha-hora-recurso duplicadas",
+        "Mantener una observación por el grano horario de la métrica y guardar repeticiones en cuarentena.",
+        len(validos), len(validos) - int(duplicados.sum()),
+    )
+    ejecucion.guardar(salida, resultado, fuente, len(crudo) * 24)
+    return resultado
 
 
-_ACTIVE_RUN: QualityRun
+def limpiar_xm(ejecucion: EjecucionCalidad) -> None:
+    global _EJECUCION_ACTIVA
+    _EJECUCION_ACTIVA = ejecucion
 
+    _despivotar_horario(
+        _leer("xm_precio_bolsa"), "xm_precio_bolsa", "precio_cop_kwh",
+        "xm_precio_bolsa_horario", (-100000, 100000000)
+    )
+    _despivotar_horario(
+        _leer("xm_demanda"), "xm_demanda", "demanda_kwh",
+        "xm_demanda_horaria", (0, 1e12)
+    )
 
-def clean_xm(run: QualityRun) -> None:
-    global _ACTIVE_RUN
-    _ACTIVE_RUN = run
-    _hourly(_read("xm_precio_bolsa"), "xm_precio_bolsa", "precio_cop_kwh",
-            "xm_precio_bolsa_horario", (-100000, 100000000))
-    _hourly(_read("xm_demanda"), "xm_demanda", "demanda_kwh", "xm_demanda_horaria", (0, 1e12))
-    for source, output, value_name, scale in (
+    for fuente, salida, nombre_valor, escala in (
         ("xm_embalses", "xm_embalses_diario", "volumen_util_pct", 100.0),
         ("xm_aportes_hidricos", "xm_aportes_hidricos_diario", "aportes_mwh", 1.0),
     ):
-        raw = _read(source)
-        dates = pd.to_datetime(raw["Date"], errors="coerce")
-        values = _numeric(raw["Value"]) * scale
-        frame = pd.DataFrame({"fecha": dates, value_name: values})
-        invalid = frame["fecha"].isna() | frame[value_name].isna() | frame[value_name].lt(0)
-        if source == "xm_embalses":
-            invalid |= frame[value_name].gt(100)
-        run.quarantine(source, raw.loc[invalid], "Fecha o medida diaria inválida/fuera de rango")
-        result = frame.loc[~invalid].drop_duplicates("fecha").copy()
-        duplicate_indices = frame.index[~invalid][frame.loc[~invalid].duplicated("fecha")]
-        run.quarantine(source, raw.loc[duplicate_indices], "Registro diario duplicado")
-        run.save(output, result, source, len(raw))
-    _hourly(_read("xm_generacion_recurso"), "xm_generacion_recurso", "generacion_kwh",
-            "xm_generacion_recurso_horario", (0, 1e12), code_column=True)
+        crudo = _leer(fuente)
+        fechas = pd.to_datetime(crudo["Date"], errors="coerce")
+        valores = _a_numerico(crudo["Value"]) * escala
+        tabla = pd.DataFrame({"fecha": fechas, nombre_valor: valores})
 
-    raw = _read("xm_listado_recursos")
-    result = pd.DataFrame({
-        "codigo_recurso": raw["Code"].astype("string").str.strip().str.upper(),
-        "recurso": raw["Name"].astype("string").str.strip(),
-        "tipo_recurso": raw["Type"].fillna("No informado").astype(str).str.strip(),
-        "empresa": raw["CompanyCode"].fillna("No informado").astype(str).str.strip(),
-        "fuente_energia": raw["EnerSource"].fillna("No informado").astype(str).str.strip(),
-        "estado": raw["State"].fillna("No informado").astype(str).str.strip(),
-    })
-    invalid = result["codigo_recurso"].isna() | result["codigo_recurso"].eq("") | result["recurso"].isna()
-    run.quarantine("xm_listado_recursos", raw.loc[invalid], "Código o nombre del recurso vacío")
-    result = result.loc[~invalid]
-    duplicates = result.duplicated("codigo_recurso", keep="first")
-    run.quarantine("xm_listado_recursos", raw.loc[result.index[duplicates]], "Código de recurso duplicado")
-    result = result.loc[~duplicates].reset_index(drop=True)
-    run.save("xm_listado_recursos", result, "xm_listado_recursos", len(raw))
+        fecha_invalida = tabla["fecha"].isna()
+        medida_nula = tabla[nombre_valor].isna()
+        medida_invalida = tabla[nombre_valor].lt(0)
+        if fuente == "xm_embalses":
+            medida_invalida |= tabla[nombre_valor].gt(100)
 
+        invalido = fecha_invalida | medida_nula | medida_invalida
+        motivo = np.select(
+            [fecha_invalida, medida_nula, medida_invalida],
+            ["Fecha diaria inválida", "Medida diaria nula o no numérica",
+             "Medida diaria negativa o fuera de rango"],
+            default="",
+        )
+        for razon in pd.unique(motivo[invalido]):
+            ejecucion.enviar_cuarentena(fuente, crudo.loc[motivo == razon], str(razon))
 
-def clean_ideam(run: QualityRun) -> None:
-    definitions = [
-        ("ideam_precipitacion_diaria", "precipitacion_mm", ["codigoestacion", "nombreestacion",
-         "municipio", "fecha", "precipitacion_mm", "latitud", "longitud"]),
-        ("ideam_temperatura_diaria", "temperatura", ["codigoestacion", "nombreestacion",
-         "municipio", "fecha", "temperatura_media_c", "temperatura_minima_c",
-         "temperatura_maxima_c", "latitud", "longitud"]),
-    ]
-    for source, _, _ in definitions:
-        raw = _read(source)
-        frame = pd.DataFrame({
-            "codigo_estacion": raw["codigoestacion"].astype("string").str.strip(),
-            "estacion": raw["nombreestacion"].astype("string").str.strip(),
-            "municipio": raw["municipio"].map(_municipality),
-            "municipio_key": raw["municipio"].map(_normal),
-            "fecha": pd.to_datetime(raw["fecha"], errors="coerce"),
-            "latitud": _numeric(raw["latitud"]),
-            "longitud": _numeric(raw["longitud"]),
-        })
-        if source == "ideam_precipitacion_diaria":
-            frame["precipitacion_mm"] = _numeric(raw["precipitacion_mm"])
-            invalid = (frame["fecha"].isna() | frame["codigo_estacion"].isna()
-                       | frame["precipitacion_mm"].isna() | frame["precipitacion_mm"].lt(0))
-            output = source
-            keys = ["codigo_estacion", "fecha"]
-        else:
-            for col in ("temperatura_media_c", "temperatura_minima_c", "temperatura_maxima_c"):
-                frame[col] = _numeric(raw[col])
-            invalid = frame["fecha"].isna() | frame["codigo_estacion"].isna() | frame[
-                ["temperatura_media_c", "temperatura_minima_c", "temperatura_maxima_c"]
-            ].isna().any(axis=1)
-            invalid |= frame["temperatura_minima_c"].gt(frame["temperatura_maxima_c"])
-            output = source
-            keys = ["codigo_estacion", "fecha"]
-        invalid |= frame["municipio_key"].eq("") | frame["latitud"].isna() | frame["longitud"].isna()
-        run.quarantine(source, raw.loc[invalid], "Estación, municipio, fecha o medición inválida")
-        result = frame.loc[~invalid].copy()
-        duplicates = result.duplicated(keys, keep="first")
-        run.quarantine(source, raw.loc[result.index[duplicates]], "Registro estación-fecha duplicado")
-        run.save(output, result.loc[~duplicates].reset_index(drop=True), source, len(raw))
+        regla_medida = (
+            "Validar porcentaje de embalses entre 0–100; aportes hídricos no negativos."
+            if fuente == "xm_embalses"
+            else "Validar aporte hídrico numérico y no negativo."
+        )
+        ejecucion.registrar_regla(
+            fuente, "Fecha y medida diaria inválidas",
+            f"Convertir la fecha y {regla_medida}",
+            len(crudo), int((~invalido).sum()),
+        )
 
+        resultado = tabla.loc[~invalido].drop_duplicates("fecha").copy()
+        idx_duplicados = tabla.index[~invalido][tabla.loc[~invalido].duplicated("fecha")]
+        ejecucion.enviar_cuarentena(fuente, crudo.loc[idx_duplicados], "Registro diario duplicado")
+        ejecucion.registrar_regla(
+            fuente, "Filas diarias con fecha duplicada",
+            "Conservar una fila por fecha y guardar duplicados en cuarentena.",
+            int((~invalido).sum()), int((~invalido).sum() - len(idx_duplicados)),
+        )
+        ejecucion.guardar(salida, resultado, fuente, len(crudo))
 
-def clean_noaa(run: QualityRun) -> None:
-    raw = _read("noaa_oni")
-    seasons = {"DJF": 1, "JFM": 2, "FMA": 3, "MAM": 4, "AMJ": 5, "MJJ": 6,
-               "JJA": 7, "JAS": 8, "ASO": 9, "SON": 10, "OND": 11, "NDJ": 12}
-    month = raw["SEAS"].astype(str).str.upper().map(seasons)
-    year = _numeric(raw["YR"])
-    oni = _numeric(raw["ANOM"])
-    result = pd.DataFrame({"fecha": pd.to_datetime(
-        {"year": year, "month": month, "day": 1}, errors="coerce"
-    ), "oni": oni})
-    result["fase_enso"] = np.select(
-        [result["oni"].ge(0.5), result["oni"].le(-0.5)],
-        ["El Niño", "La Niña"], default="Neutral",
+    _despivotar_horario(
+        _leer("xm_generacion_recurso"), "xm_generacion_recurso", "generacion_kwh",
+        "xm_generacion_recurso_horario", (0, 1e12), con_codigo=True
     )
-    invalid = result["fecha"].isna() | result["oni"].isna()
-    run.quarantine("noaa_oni", raw.loc[invalid], "Trimestre, año u ONI inválido")
-    result = result.loc[~invalid]
-    duplicates = result.duplicated("fecha", keep="first")
-    run.quarantine("noaa_oni", raw.loc[result.index[duplicates]], "Mes central duplicado")
-    run.save("noaa_oni_mensual", result.loc[~duplicates].reset_index(drop=True),
-             "noaa_oni", len(raw))
 
-
-def clean_divipola(run: QualityRun) -> None:
-    raw = _read("divipola_municipios")
-    result = pd.DataFrame({
-        "codigo_municipio": raw["idmupio"].astype("string").str.strip().str.zfill(5),
-        "municipio": raw["nommpio"].map(_municipality),
-        "municipio_key": raw["nommpio"].map(_normal),
-        "codigo_departamento": raw["iddepto"].astype("string").str.strip().str.zfill(2),
-        "latitud": _numeric(raw["mpiolatitud"]),
-        "longitud": _numeric(raw["mpiolongitud"]),
+    crudo = _leer("xm_listado_recursos")
+    resultado = pd.DataFrame({
+        "codigo_recurso": crudo["Code"].astype("string").str.strip().str.upper(),
+        "recurso": crudo["Name"].astype("string").str.strip(),
+        "tipo_recurso": crudo["Type"].fillna("No informado").astype(str).str.strip(),
+        "empresa": crudo["CompanyCode"].fillna("No informado").astype(str).str.strip(),
+        "fuente_energia": crudo["EnerSource"].fillna("No informado").astype(str).str.strip(),
+        "estado": crudo["State"].fillna("No informado").astype(str).str.strip(),
     })
-    invalid = result.isna().any(axis=1) | result["municipio_key"].eq("")
-    run.quarantine("divipola", raw.loc[invalid], "Código, municipio o coordenada DIVIPOLA inválida")
-    result = result.loc[~invalid]
-    duplicates = result.duplicated("codigo_municipio", keep="first")
-    run.quarantine("divipola", raw.loc[result.index[duplicates]], "Código DIVIPOLA duplicado")
-    result = result.loc[~duplicates].drop_duplicates("municipio_key", keep="first")
-    run.save("divipola_municipios", result.reset_index(drop=True), "divipola", len(raw))
+    invalido = (
+        resultado["codigo_recurso"].isna()
+        | resultado["codigo_recurso"].eq("")
+        | resultado["recurso"].isna()
+        | resultado["recurso"].astype("string").str.strip().eq("")
+    )
+    ejecucion.enviar_cuarentena("xm_listado_recursos", crudo.loc[invalido], "Código o nombre del recurso vacío")
+    ejecucion.registrar_regla(
+        "xm_listado_recursos", "Código o nombre del recurso vacío",
+        "Exigir código y nombre de planta/recurso; registros incompletos a cuarentena.",
+        len(crudo), int((~invalido).sum()),
+    )
+    resultado = resultado.loc[~invalido]
+    duplicados = resultado.duplicated("codigo_recurso", keep="first")
+    ejecucion.enviar_cuarentena("xm_listado_recursos", crudo.loc[resultado.index[duplicados]], "Código de recurso duplicado")
+    ejecucion.registrar_regla(
+        "xm_listado_recursos", "Código de recurso repetido",
+        "Publicar una fila por código XM y guardar duplicados en cuarentena.",
+        len(resultado), int((~duplicados).sum()),
+    )
+    resultado = resultado.loc[~duplicados].reset_index(drop=True)
+    ejecucion.guardar("xm_listado_recursos", resultado, "xm_listado_recursos", len(crudo))
 
 
-def execute() -> QualityRun:
-    run = QualityRun()
-    clean_sales(run)
-    clean_xm(run)
-    clean_ideam(run)
-    clean_noaa(run)
-    clean_divipola(run)
-    run.write_quarantines()
-    return run
+def limpiar_ideam(ejecucion: EjecucionCalidad) -> None:
+    divipola = pd.read_parquet(config.RAIZ / "data" / "silver" / "divipola_municipios.parquet")
+    codigos_municipio = dict(zip(divipola["municipio_key"], divipola["codigo_municipio"]))
+
+    for fuente in ("ideam_precipitacion_diaria", "ideam_temperatura_diaria"):
+        crudo = _leer(fuente)
+        tabla = pd.DataFrame({
+            "codigo_estacion": crudo["codigoestacion"].astype("string").str.strip(),
+            "estacion": crudo["nombreestacion"].astype("string").str.strip(),
+            "municipio": crudo["municipio"].map(_limpiar_municipio),
+            "municipio_key": crudo["municipio"].map(lambda v: _normalizar(_limpiar_municipio(v))),
+            "fecha": pd.to_datetime(crudo["fecha"], errors="coerce"),
+            "latitud": _a_numerico(crudo["latitud"]),
+            "longitud": _a_numerico(crudo["longitud"]),
+        })
+        tabla["codigo_municipio"] = tabla["municipio_key"].map(codigos_municipio)
+
+        if fuente == "ideam_precipitacion_diaria":
+            tabla["precipitacion_mm"] = _a_numerico(crudo["precipitacion_mm"])
+            invalido = (
+                tabla["fecha"].isna()
+                | tabla["codigo_estacion"].isna()
+                | tabla["precipitacion_mm"].isna()
+                | tabla["precipitacion_mm"].lt(0)
+            )
+        else:
+            cols_temp = ["temperatura_media_c", "temperatura_minima_c", "temperatura_maxima_c"]
+            for col in cols_temp:
+                tabla[col] = _a_numerico(crudo[col])
+            invalido = (
+                tabla["fecha"].isna()
+                | tabla["codigo_estacion"].isna()
+                | tabla[cols_temp].isna().any(axis=1)
+                | tabla["temperatura_minima_c"].gt(tabla["temperatura_maxima_c"])
+                | ~tabla[cols_temp].apply(lambda col: col.between(-90, 60)).all(axis=1)
+            )
+
+        ubicacion_invalida = (
+            tabla["municipio_key"].eq("")
+            | tabla["codigo_municipio"].isna()
+            | ~tabla["latitud"].between(-90, 90)
+            | ~tabla["longitud"].between(-180, 180)
+        )
+        invalido |= ubicacion_invalida
+
+        ejecucion.registrar_regla(
+            fuente, "Estación, fecha, medición o asociación municipal inválida",
+            "Estandarizar tipos, validar coordenadas y asociar el municipio al código DIVIPOLA.",
+            len(crudo), int((~invalido).sum()),
+        )
+        ejecucion.enviar_cuarentena(fuente, crudo.loc[invalido], "Estación, municipio, fecha o medición inválida")
+
+        resultado = tabla.loc[~invalido].copy()
+        duplicados = resultado.duplicated(["codigo_estacion", "fecha"], keep="first")
+        ejecucion.enviar_cuarentena(fuente, crudo.loc[resultado.index[duplicados]], "Registro estación-fecha duplicado")
+        ejecucion.registrar_regla(
+            fuente, "Clave estación-fecha duplicada",
+            "Mantener una fila por estación y día; duplicados a cuarentena.",
+            len(resultado), int((~duplicados).sum()),
+        )
+        ejecucion.guardar(fuente, resultado.loc[~duplicados].reset_index(drop=True), fuente, len(crudo))
+
+
+def limpiar_noaa(ejecucion: EjecucionCalidad) -> None:
+    crudo = _leer("noaa_oni")
+    trimestres = {
+        "DJF": 1, "JFM": 2, "FMA": 3, "MAM": 4, "AMJ": 5, "MJJ": 6,
+        "JJA": 7, "JAS": 8, "ASO": 9, "SON": 10, "OND": 11, "NDJ": 12,
+    }
+    mes = crudo["SEAS"].astype(str).str.upper().map(trimestres)
+    anio = _a_numerico(crudo["YR"])
+    oni = _a_numerico(crudo["ANOM"])
+
+    resultado = pd.DataFrame({
+        "fecha": pd.to_datetime({"year": anio, "month": mes, "day": 1}, errors="coerce"),
+        "oni": oni,
+    })
+    resultado["fase_enso"] = np.select(
+        [resultado["oni"].ge(0.5), resultado["oni"].le(-0.5)],
+        ["El Niño", "La Niña"],
+        default="Neutral",
+    )
+
+    invalido = resultado["fecha"].isna() | resultado["oni"].isna() | ~resultado["oni"].between(-5, 5)
+    ejecucion.registrar_regla(
+        "noaa_oni", "Trimestre móvil, año u ONI inválido",
+        "Mapear los 12 trimestres al mes central y convertir año/ONI a tipos numéricos.",
+        len(crudo), int((~invalido).sum()),
+    )
+    ejecucion.enviar_cuarentena("noaa_oni", crudo.loc[invalido], "Trimestre, año u ONI inválido")
+
+    resultado = resultado.loc[~invalido]
+    duplicados = resultado.duplicated("fecha", keep="first")
+    ejecucion.enviar_cuarentena("noaa_oni", crudo.loc[resultado.index[duplicados]], "Mes central duplicado")
+    ejecucion.registrar_regla(
+        "noaa_oni", "Mes central ONI duplicado",
+        "Conservar una observación ONI por mes central.",
+        len(resultado), int((~duplicados).sum()),
+    )
+    ejecucion.registrar_regla(
+        "noaa_oni", "Fase ENSO no clasificada",
+        "Clasificar ONI ≥ 0,5 como El Niño, ≤ -0,5 como La Niña y el resto como Neutral.",
+        len(resultado), int(resultado["fase_enso"].isin(["El Niño", "La Niña", "Neutral"]).sum()),
+    )
+    ejecucion.guardar("noaa_oni_mensual", resultado.loc[~duplicados].reset_index(drop=True), "noaa_oni", len(crudo))
+
+
+def limpiar_divipola(ejecucion: EjecucionCalidad) -> None:
+    crudo = _leer("divipola_municipios")
+    departamento = crudo["iddepto"].astype("string").str.strip().str.zfill(2)
+    antioquia = crudo.loc[departamento.eq("05")].copy()
+
+    ejecucion.registrar_regla(
+        "divipola", "Catálogo nacional contiene municipios fuera del alcance geográfico",
+        "Limitar la dimensión municipal a Antioquia, región de EnerAndes e IDEAM en este proyecto.",
+        len(crudo), len(antioquia),
+    )
+
+    resultado = pd.DataFrame({
+        "codigo_municipio": antioquia["idmupio"].astype("string").str.strip().str.zfill(5),
+        "municipio": antioquia["nommpio"].map(_limpiar_municipio),
+        "municipio_key": antioquia["nommpio"].map(lambda v: _normalizar(_limpiar_municipio(v))),
+        "codigo_departamento": departamento.loc[antioquia.index],
+        "latitud": _a_numerico(antioquia["mpiolatitud"]),
+        "longitud": _a_numerico(antioquia["mpiolongitud"]),
+    })
+
+    invalido = (
+        resultado.isna().any(axis=1)
+        | resultado["municipio_key"].eq("")
+        | ~resultado["latitud"].between(-90, 90)
+        | ~resultado["longitud"].between(-180, 180)
+    )
+    ejecucion.enviar_cuarentena("divipola", antioquia.loc[invalido], "Código, municipio o coordenada DIVIPOLA inválida")
+    ejecucion.registrar_regla(
+        "divipola", "Código, nombre o coordenadas municipales inválidos",
+        "Exigir código DANE, nombre no vacío y coordenadas numéricas antes de publicar.",
+        len(resultado), int((~invalido).sum()),
+    )
+
+    resultado = resultado.loc[~invalido]
+    duplicados = resultado.duplicated("codigo_municipio", keep="first")
+    ejecucion.enviar_cuarentena("divipola", antioquia.loc[resultado.index[duplicados]], "Código DIVIPOLA duplicado")
+    ejecucion.registrar_regla(
+        "divipola", "Códigos municipales repetidos",
+        "Conservar una fila por código DIVIPOLA; no deduplicar municipios distintos por nombre.",
+        len(resultado), int((~duplicados).sum()),
+    )
+
+    resultado = resultado.loc[~duplicados]
+    ejecucion.guardar(
+        "divipola_municipios", resultado.reset_index(drop=True), "divipola", len(crudo),
+        fuera_alcance=len(crudo) - len(antioquia),
+    )
+
+
+def ejecutar() -> EjecucionCalidad:
+    ejecucion = EjecucionCalidad()
+    limpiar_divipola(ejecucion)
+    limpiar_ventas(ejecucion)
+    limpiar_xm(ejecucion)
+    limpiar_ideam(ejecucion)
+    limpiar_noaa(ejecucion)
+    ejecucion.escribir_cuarentenas()
+    return ejecucion

@@ -5,11 +5,12 @@
 
 | Fecha | Actividad ejecutada | Resultado / evidencia | Commit / PR / revisión |
 |---|---|---|---|
-| 2026-11-08 | Implementación EA2 en rama `feature/ea2-calidad-modelo-dimensional`: contratos Pandera, transformaciones Plata, cuarentena, DIVIPOLA y estructura dbt/DuckDB. | Cambios locales de esta entrega; validación y hash se documentan al finalizar. | Pendiente de commits separados, PR propio y revisión real de compañero. |
+| 2026-11-11 | Implementación ETL, transformaciones Plata y modelos dbt. | Commit registrado en la rama actual. | `fcbf1d2` |
+| 2026-11-11 | Documentación del diccionario, modelo dimensional y reporte. | Commit registrado en la rama actual. | `a6de790` |
+| 2026-11-11 | Generación de archivos de entrega y evidencias del repositorio. | Commit registrado en la rama actual. | `8caffca` |
+| 2026-11-11 | Ajustes de Gitignore, README y dependencias. | Commit registrado en la rama actual. | `a3bf700` |
+| 2026-11-11 | Simplificación del README, reglas con métricas por fuente, asociación de ventas/estaciones a DIVIPOLA y pruebas de unicidad compuesta para hechos. | 11 pruebas pytest y 64 modelos/pruebas dbt pasan en la validación local. | Cambios de EA2 de esta sesión. |
 
-## Seguimiento requerido por el flujo de equipo
-
-- Registrar al menos tres commits propios con fechas y hashes reales, distribuidos durante el periodo.
-- Abrir un PR propio desde esta rama y solicitar revisión a un compañero; registrar enlace y nombre
-  del revisor cuando se haya completado.
-- Añadir una fila por sesión de trabajo y enlazar pruebas/evidencias verificables.
+El historial de commits, PR propio, revisión de compañero y tag EA2 se gestionan en el
+repositorio Git. El estudiante indicó que esos requisitos ya están resueltos; esta
+bitácora conserva el registro de las actividades técnicas individuales.

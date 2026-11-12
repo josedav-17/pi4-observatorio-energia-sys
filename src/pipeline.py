@@ -1,56 +1,71 @@
-"""
-Punto de entrada unico del pipeline de extraccion (capa BRONCE).
+import time
+from datetime import datetime, timedelta, timezone
+import pandas as pd
+import requests
 
-Uso:
-    python -m src.pipeline              # descarga lo que falte
-    python -m src.pipeline --forzar     # vuelve a descargar todo
-"""
-# ---------------------------------------------------------------------------
-# IMPORTS
-# ---------------------------------------------------------------------------
-import sys      # sys.argv: lista con lo que se escribio en el comando (ej. --forzar)
-import time     # time.time(): segundos actuales, para medir cuanto tarda
-
-import pandas as pd     # pandas: para abrir cada Parquet y contar filas y columnas
-
-from src import config                              # configuracion central
-from src.extract import enerandes, ideam, ideam_temperatura, noaa, xm, xm_aportes
-from src.utils import log                           # mensajes con hora
+from src import config
 
 
-def resumen() -> None:
-    """Muestra una tabla con los archivos de la capa bronce."""
-    log("Resumen de la capa bronce:")
-    # :<34 alinea a la izquierda en 34 espacios; :>10 a la derecha en 10.
-    print(f"   {'archivo':<34}{'filas':>10}{'columnas':>10}{'KB':>8}")
-    for archivo in sorted(config.DIR_BRONZE.glob("*.parquet")):    # cada .parquet, en orden
-        df = pd.read_parquet(archivo)
-        # len(df) = filas; df.shape[1] = columnas; st_size // 1024 = tamano en KB
-        print(f"   {archivo.name:<34}{len(df):>10,}{df.shape[1]:>10}{archivo.stat().st_size // 1024:>8}")
+def log(mensaje: str) -> None:
+    print(f"[{datetime.now():%H:%M:%S}] {mensaje}", flush=True)
 
 
-def main() -> None:
-    forzar = "--forzar" in sys.argv       # True si el comando trae --forzar
-    inicio = time.time()                  # hora de inicio, para medir
-    log(f"Pipeline bronce | rango {config.FECHA_INICIO} a {config.FECHA_FIN} | forzar={forzar}")
-    for extractor in (xm, xm_aportes, ideam, ideam_temperatura, noaa, enerandes):
-        extractor.extraer(forzar)                    # todos tienen la funcion extraer()
-    exportar_muestras()
-    resumen()
-    log(f"Listo en {time.time() - inicio:.0f} s")    # :.0f = sin decimales
+def _con_reintentos(funcion, descripcion: str):
+    for intento in range(1, config.HTTP_REINTENTOS + 1):
+        try:
+            return funcion()
+        except requests.RequestException as error:
+            if intento == config.HTTP_REINTENTOS:
+                raise RuntimeError(f"Fallo definitivo en {descripcion}: {error}") from error
+            espera = 2 ** intento
+            log(f"   ! intento {intento} fallo ({type(error).__name__}); reintento en {espera} s")
+            time.sleep(espera)
 
 
-def exportar_muestras() -> None:
-    """Exporta las primeras 200 filas de cada archivo bronce a CSV."""
-    directorio = config.RAIZ / "data" / "sample"
-    directorio.mkdir(parents=True, exist_ok=True)
-    for archivo in sorted(config.DIR_BRONZE.glob("*.parquet")):
-        muestra = pd.read_parquet(archivo).head(200)
-        muestra.to_csv(directorio / f"{archivo.stem}.csv", index=False)
-        log(f"   muestra {archivo.stem}.csv: {len(muestra)} filas")
+def http_json(metodo: str, url: str, **kwargs):
+    def llamar():
+        r = requests.request(metodo, url, timeout=config.HTTP_TIMEOUT, **kwargs)
+        r.raise_for_status()
+        return r.json()
+
+    return _con_reintentos(llamar, f"{metodo} {url}")
 
 
-# Este bloque solo se ejecuta cuando se corre el archivo directamente
-# (python -m src.pipeline), no cuando otro archivo lo importa.
-if __name__ == "__main__":
-    main()
+def http_texto(url: str) -> str:
+    def llamar():
+        r = requests.get(url, timeout=config.HTTP_TIMEOUT)
+        r.raise_for_status()
+        return r.text
+
+    return _con_reintentos(llamar, f"GET {url}")
+
+
+def ventanas(inicio, fin, dias: int):
+    a = inicio
+    while a <= fin:
+        b = min(a + timedelta(days=dias - 1), fin)
+        yield a, b
+        a = b + timedelta(days=1)
+
+
+def ruta_bronce(nombre: str):
+    return config.DIR_BRONZE / f"{nombre}.parquet"
+
+
+def ya_existe(nombre: str, forzar: bool) -> bool:
+    if ruta_bronce(nombre).exists() and not forzar:
+        log(f"   = {nombre}.parquet ya existe; se omite (no lo repita ya lo hizo bien jaja igual si quieres forzar usa --forzar )")
+        return True
+    return False
+
+
+def guardar_bronce(df: pd.DataFrame, nombre: str, fuente: str, origen: str) -> None:
+    # Guardar sin alterar los datos originales, solo agregando metadatos de origen
+    df = df.copy()
+    df["_fuente"] = fuente
+    df["_origen"] = origen
+    df["_extraido_en"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    config.DIR_BRONZE.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(ruta_bronce(nombre), index=False)
+    log(f"   + {nombre}.parquet guardado: {len(df):,} filas x {df.shape[1]} columnas")

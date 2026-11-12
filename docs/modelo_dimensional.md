@@ -1,6 +1,15 @@
-# Modelo dimensional de la capa Oro
+# Modelo dimensional — Capa Oro
 
-## Esquema estrella
+## Diagrama entidad-relación
+
+# Claves de tiempo: fecha_key sigue el formato entero YYYYMMDD. Para las ventas mensuales se toma el primer día del mes (YYYYMM01). dim_fecha abarca todos los días calendario ## de los años con ventas registradas e incluye la fase ENSO correspondiente según el mes central del trimestre móvil ONI (ej. DJF → enero).
+
+## Geografía: Se toma DIVIPOLA (filtrado a Antioquia) como tabla maestra de municipios. Tanto las ventas de EnerAndes como las estaciones del IDEAM cruzan contra este código oficial; los registros cuyo municipio no logra homologarse quedan en cuarentena en Plata y no pasan a Oro.
+
+## Alcance de hechos: Las series climáticas diarias del IDEAM y el índice ONI mensual se mantienen en Plata y como dimensiones de apoyo (dim_estacion, dim_enso) sin forzar una ## tabla de hechos adicional.
+
+## Pruebas: dbt valida unicidad, valores no nulos e integridad referencial en todas las llaves primarias y foráneas del modelo. -
+
 
 ```mermaid
 erDiagram
@@ -32,6 +41,7 @@ erDiagram
     }
     DIM_ESTACION {
         string codigo_estacion PK
+        string codigo_municipio FK
         string estacion
         string municipio
     }
@@ -65,24 +75,12 @@ erDiagram
         string recurso_key FK
         double generacion_kwh
     }
-```
 
-`dim_estacion` y `dim_enso` son dimensiones conformadas para consultas de clima y ENSO
-(la medición diaria IDEAM y la serie mensual ONI quedan en Plata; no se inventa una
-cuarta tabla de hechos de clima). Las pruebas de dbt verifican unicidad/no nulidad de
-las claves dimensionales y relaciones de las claves foráneas declaradas.
 
-## Grano de hechos
 
-| Modelo | Grano | Medidas |
-|---|---|---|
-| `fact_ventas_mensual` | Mes, municipio, segmento y modalidad de compra EnerAndes | kWh vendidos, COP facturados y clientes |
-| `fact_mercado_horario` | Fecha y hora del sistema eléctrico nacional | Precio, demanda, nivel de embalses y aportes |
-| `fact_generacion_recurso` | Fecha, hora y recurso/planta XM | Generación kWh |
 
-`fecha_key` usa `YYYYMMDD`; las fechas de venta representan el primer día del mes de
-origen. `dim_fecha` cubre los días calendario de los años con ventas disponibles. El
-mes central ONI (por ejemplo, DJF → enero) alimenta la fase ENSO de la dimensión fecha.
-DIVIPOLA es la fuente externa municipal; los municipios de ventas no encontrados en
-la referencia se mantienen identificados con `es_divipola = false` para no perder
-ventas silenciosamente.
+
+
+
+
+

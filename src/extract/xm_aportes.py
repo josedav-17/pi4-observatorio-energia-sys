@@ -1,4 +1,3 @@
-"""Fuente propia: aportes hidricos diarios de XM (AporEner)."""
 import pandas as pd
 
 from src import config
@@ -7,7 +6,6 @@ from src.utils import guardar_bronce, http_json, log, ventanas, ya_existe
 
 
 def extraer(forzar: bool = False) -> None:
-    """Consulta AporEner en ventanas diarias de hasta XM_MAX_DIAS."""
     metrica, entidad, periodo, nombre = config.XM_APORTES_METRICA
     log("XM - aportes hidricos diarios (AporEner)")
     if ya_existe(nombre, forzar):
@@ -26,6 +24,7 @@ def extraer(forzar: bool = False) -> None:
         nuevas = aplanar(http_json("POST", url, json=cuerpo), periodo)
         filas.extend(nuevas)
         log(f"   {metrica} {inicio} a {fin}: {len(nuevas)} filas")
+
     guardar_bronce(pd.DataFrame(filas), nombre, fuente="XM", origen=f"{url} MetricId={metrica}")
 
 
