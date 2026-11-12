@@ -1,4 +1,3 @@
-"""Ejecuta la capa plata, genera su reporte de calidad y construye dbt/Oro."""
 from __future__ import annotations
 
 import os
@@ -7,94 +6,132 @@ import sys
 from datetime import datetime, timezone
 
 from src import config
-from src.extract import divipola
-from src.transform.cleaners import execute
+from src.extract import (
+    divipola,
+    enerandes,
+    ideam,
+    ideam_temperatura,
+    noaa,
+    xm,
+    xm_aportes,
+)
+from src.transform.cleaners import ejecutar
 
 
-QUALITY_RULES = [
-    "Encabezados de EnerAndes detectados por contenido y no por posición fija.",
-    "Fechas normalizadas al primer día del mes y fuera de calendario a cuarentena.",
-    "Energia 2024 en MWh convertida a kWh según la unidad de origen.",
-    "Municipios normalizados, corregidos por alias y sin claves vacías.",
-    "Ventas con medidas negativas o energía no numérica enviadas a cuarentena.",
-    "Ventas sin duplicados por fecha, municipio, segmento y modalidad.",
-    "XM horario en formato largo: una fila por fecha, hora y recurso cuando aplique.",
-    "La hora XM debe pertenecer al rango inclusivo 1–24.",
-    "Precio de bolsa acotado a -100.000–100.000.000 COP/kWh.",
-    "Demanda y generación deben ser numéricas y no negativas.",
-    "Embalses expresados en porcentaje entre 0 y 100.",
-    "Aportes hídricos no negativos.",
-    "Catálogo XM con código único y nombre de recurso informado.",
-    "IDEAM con fecha, código de estación, municipio, coordenadas y medición válidos.",
-    "Precipitación no negativa y temperatura mínima menor o igual a máxima.",
-    "ONI trimestral asignado al mes central y fase clasificada con umbral ±0,5.",
-    "DIVIPOLA con código municipal único, nombre y coordenadas numéricas.",
-    "Cada tabla plata valida tipos, rangos y llaves con Pandera antes de persistir.",
-]
+def _preparar_bronce() -> None:
+    extractores = (
+        xm,
+        xm_aportes,
+        ideam,
+        ideam_temperatura,
+        noaa,
+        enerandes,
+        divipola,
+    )
+    for extractor in extractores:
+        extractor.extraer()
 
 
-def _write_quality_report(stats: dict[str, dict[str, int]]) -> None:
-    report = [
+def _escribir_reporte_calidad(
+    stats: dict[str, dict[str, int]],
+    metricas_reglas: list[dict[str, object]],
+    resumen_cuarentenas: dict[str, dict[str, int]],
+) -> None:
+    reporte = [
         "# Reporte de calidad de datos — EA2",
         "",
         f"Última ejecución: {datetime.now(timezone.utc).isoformat(timespec='seconds')}.",
         "",
-        "Los indicadores se calculan sobre las filas bronce inspeccionadas y las filas plata "
-        "persistidas. Las filas rechazadas permanecen en `data/silver/cuarentena_*.parquet` "
-        "con una columna `motivo`. No se reportan cifras simuladas: si una fuente no pudo "
-        "procesarse, el comando termina con error.",
+        "Generado automáticamente por `python -m src.transformar`. En las tablas, "
+        "**Antes** es el número de filas evaluadas por la regla y **Después** el número "
+        "que la supera. Las filas no corregibles se guardan en "
+        "`data/silver/cuarentena_<fuente>.parquet` con la columna `motivo`.",
         "",
-        "| Fuente | Filas antes | Filas plata | Cuarentena |",
-        "|---|---:|---:|---:|",
+        "## Resumen por fuente",
+        "",
+        "| Fuente | Filas de entrada | Filas Plata | Cuarentena | Fuera de alcance |",
+        "|---|---:|---:|---:|---:|",
     ]
-    for source, values in sorted(stats.items()):
-        report.append(
-            f"| {source} | {values['antes']:,} | {values['despues']:,} | "
-            f"{values['cuarentena']:,} |"
+
+    for fuente, valores in sorted(stats.items()):
+        reporte.append(
+            f"| {fuente} | {valores['antes']:,} | {valores['despues']:,} | "
+            f"{valores['cuarentena']:,} | {valores['fuera_alcance']:,} |"
         )
-    report.extend(["", "## Reglas aplicadas", ""])
-    report.extend(f"{index}. {rule}" for index, rule in enumerate(QUALITY_RULES, 1))
-    report.extend([
+
+    reporte.extend([
         "",
-        "## Interpretación de cuarentena",
+        "DIVIPOLA se limita a Antioquia, región de EnerAndes e IDEAM en este proyecto. "
+        "Los municipios de otros departamentos se reportan como fuera de alcance, no como "
+        "errores ni cuarentena. En las fuentes XM horarias, la entrada representa filas "
+        "anchas (una por día/recurso) y Plata representa observaciones despivotadas.",
         "",
-        "Se retienen las filas con fechas o claves vacías/ilegibles, medidas no numéricas, "
-        "valores fuera de rango, claves duplicadas y encabezados/notas que no representan "
-        "observaciones. Las ventas repetidas se excluyen del agregado plata después de "
-        "guardar una copia de la fila duplicada con su motivo. Revisar cada archivo "
-        "`cuarentena_<fuente>.parquet` antes de cambiar reglas.",
+        "## Reglas, problemas y métricas antes/después",
         "",
-        "## Reconciliación",
-        "",
-        "La columna `Filas antes` cuenta registros de origen (en fuentes horarias de XM, "
-        "una fila por día/recurso en formato ancho); `Filas plata` cuenta observaciones "
-        "después del unpivot. Por ello, esos dos valores no son comparables directamente "
-        "en tablas horarias. El conteo de cuarentena corresponde a observaciones rechazadas.",
+        "Cada fuente tiene su propia tabla. Las reglas y los conteos de Antes/Después "
+        "se registran durante el proceso de limpieza; no se escriben como cifras fijas.",
         "",
     ])
-    target = config.RAIZ / "docs" / "reporte_calidad.md"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("\n".join(report), encoding="utf-8")
+
+    for fuente in sorted({str(m["fuente"]) for m in metricas_reglas}):
+        reporte.extend([
+            f"### {fuente}",
+            "",
+            "| Problema detectado | Regla aplicada | Antes (filas) | Después (filas) |",
+            "|---|---|---:|---:|",
+        ])
+        for metrica in metricas_reglas:
+            if metrica["fuente"] == fuente:
+                reporte.append(
+                    f"| {metrica['problema']} | {metrica['regla']} | "
+                    f"{metrica['antes']:,} | {metrica['despues']:,} |"
+                )
+        reporte.append("")
+
+    reporte.extend([
+        "## Cuarentena: cantidad y motivo",
+        "",
+        "Las filas no corregibles se conservan en Parquet con su razón de rechazo. "
+        "Los motivos y cantidades de esta tabla se agrupan directamente desde esas filas.",
+        "",
+        "| Fuente | Motivo | Filas en cuarentena |",
+        "|---|---|---:|",
+    ])
+
+    for fuente, motivos in sorted(resumen_cuarentenas.items()):
+        for motivo, conteo in sorted(motivos.items()):
+            reporte.append(f"| {fuente} | {motivo} | {conteo:,} |")
+
+    if not resumen_cuarentenas:
+        reporte.append("| — | No hubo filas para cuarentena | 0 |")
+
+    destino = config.RAIZ / "docs" / "reporte_calidad.md"
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino.write_text("\n".join(reporte), encoding="utf-8")
 
 
 def main() -> None:
-    dane_file = config.DIR_BRONZE / "divipola_municipios.parquet"
-    if not dane_file.exists():
-        divipola.extraer()
-    run = execute()
-    _write_quality_report(run.stats)
-    env = os.environ.copy()
-    env["EA2_SILVER_DIR"] = (config.RAIZ / "data" / "silver").resolve().as_posix()
-    env["EA2_DUCKDB_PATH"] = (
+    _preparar_bronce()
+    ejecucion = ejecutar()
+    _escribir_reporte_calidad(
+        ejecucion.stats,
+        ejecucion.metricas_reglas,
+        ejecucion.resumen_cuarentenas(),
+    )
+
+    entorno = os.environ.copy()
+    entorno["EA2_SILVER_DIR"] = (config.RAIZ / "data" / "silver").resolve().as_posix()
+    entorno["EA2_DUCKDB_PATH"] = (
         config.RAIZ / "data" / "gold" / "observatorio.duckdb"
     ).resolve().as_posix()
+
     (config.RAIZ / "data" / "gold").mkdir(parents=True, exist_ok=True)
-    command = [
+    comando = [
         sys.executable, "-m", "dbt.cli.main", "build",
         "--project-dir", str(config.RAIZ / "dbt"),
         "--profiles-dir", str(config.RAIZ / "dbt"),
     ]
-    subprocess.run(command, cwd=config.RAIZ, env=env, check=True)
+    subprocess.run(comando, cwd=config.RAIZ, env=entorno, check=True)
 
 
 if __name__ == "__main__":

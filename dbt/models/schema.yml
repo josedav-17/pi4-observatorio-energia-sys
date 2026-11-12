@@ -11,12 +11,12 @@ models:
       - name: anio
         tests: [not_null]
   - name: dim_municipio
-    description: "Grano: un código municipal DIVIPOLA; nombres de venta sin correspondencia se conservan marcados como no DIVIPOLA."
+    description: "Grano: un código municipal DIVIPOLA de Antioquia."
     columns:
       - name: codigo_municipio
         tests: [unique, not_null]
       - name: municipio_key
-        tests: [not_null]
+        tests: [not_null, unique]
   - name: dim_recurso
     description: "Grano: un recurso/planta XM identificado por código de recurso."
     columns:
@@ -29,6 +29,12 @@ models:
     columns:
       - name: codigo_estacion
         tests: [unique, not_null]
+      - name: codigo_municipio
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_municipio')
+              field: codigo_municipio
   - name: dim_enso
     description: "Grano: un mes central de ONI, con índice y fase ENSO."
     columns:
@@ -43,6 +49,9 @@ models:
               values: ["El Niño", "La Niña", "Neutral"]
   - name: fact_ventas_mensual
     description: "Grano: mes, municipio, segmento de cliente y tipo de compra."
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns: [fecha_key, municipio_key, segmento, tipo_compra]
     columns:
       - name: fecha_key
         tests:
@@ -56,10 +65,21 @@ models:
           - relationships:
               to: ref('dim_municipio')
               field: codigo_municipio
+      - name: segmento
+        tests: [not_null]
+      - name: tipo_compra
+        tests: [not_null]
       - name: energia_kwh
+        tests: [not_null]
+      - name: valor_cop
+        tests: [not_null]
+      - name: clientes
         tests: [not_null]
   - name: fact_mercado_horario
     description: "Grano: una hora del sistema eléctrico nacional por fecha."
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns: [fecha_key, hora]
     columns:
       - name: fecha_key
         tests:
@@ -69,8 +89,15 @@ models:
               field: fecha_key
       - name: hora
         tests: [not_null]
+      - name: precio_cop_kwh
+        tests: [not_null]
+      - name: demanda_kwh
+        tests: [not_null]
   - name: fact_generacion_recurso
     description: "Grano: fecha, hora y recurso generador XM."
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns: [fecha_key, hora, recurso_key]
     columns:
       - name: fecha_key
         tests:
@@ -84,3 +111,7 @@ models:
           - relationships:
               to: ref('dim_recurso')
               field: codigo_recurso
+      - name: hora
+        tests: [not_null]
+      - name: generacion_kwh
+        tests: [not_null]

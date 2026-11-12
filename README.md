@@ -1,4 +1,4 @@
-# Observatorio Energía y Clima – Equipo <nombre>
+# Observatorio de Energía y Clima
 
 > Proyecto Integrado IV – Integración de Información · IU Digital de Antioquia · 2026-2
 
@@ -6,94 +6,142 @@
 
 | Nombre | Usuario GitHub | Rol |
 |---|---|---|
-| José David Cardona Mazo| josedav17 | Líder técnico / Data Engineer |
-
+| José David Cardona Mazo | `josedav17` | Líder técnico / Data Engineer |
 
 ## 🎯 Objetivo
 
-Integrar datos del mercado eléctrico (XM), del clima (IDEAM y NOAA) y de ventas internas (EnerAndes) para analizar el riesgo energético de Colombia ante El Niño 2026.
+Integrar datos del mercado eléctrico (XM), del clima (IDEAM y NOAA) y de ventas internas (EnerAndes) con la división político-administrativa oficial (DIVIPOLA) para analizar el comportamiento de ventas, precios, demanda y generación eléctrica ante el riesgo climático de El Niño 2026.
 
-## 📦 Fuentes de datos (capa bronce)
+## 🏗️ Arquitectura y flujo del pipeline
 
-| Fuente | Tipo | Archivo en `data/bronze/` |
-|---|---|---|
-| XM – API Sinergox | API REST (POST, JSON) | Precio de bolsa, demanda, embalses, generacion por recurso, catalogo de recursos y aportes hidricos |
-| IDEAM – datos.gov.co | API Socrata (SoQL) | Precipitacion y temperatura diaria por estacion |
-| NOAA – índice ONI | Archivo de texto | `noaa_oni` |
-| EnerAndes | Excel interno | `enerandes_ventas_2023` … `enerandes_ventas_2026` |
+```text
+Fuentes (Excel / APIs REST / SoQL / TXT)
+   │
+   ▼  [python -m src.pipeline]
+Capa Bronce (data/bronze/*.parquet) ──► Datos crudos + columnas de trazabilidad
+   │
+   ▼  [python -m src.transformar]
+Capa Plata  (data/silver/*.parquet) ──► Limpieza, homologación DIVIPOLA, Pandera y cuarentena
+   │
+   ▼  [dbt build]
+Capa Oro    (data/gold/observatorio.duckdb) ──► Modelo estrella (5 dimensiones, 3 hechos) ──► Dashboard
+```
 
-### Fuente XM adicional: aportes hídricos (no es fuente propia)
+## 📦 Fuentes de datos
 
-El extractor `src/extract/xm_aportes.py` consulta `AporEner` en el endpoint diario de la API Sinergox de XM (entidad `Sistema`). Es una fuente complementaria de XM y no se presenta como fuente propia. La fuente externa propia incorporada para EA2 es DIVIPOLA, publicada por MinSalud en Datos Abiertos.
+| Fuente | Tipo / Origen | Archivo en `data/bronze/` | Cobertura y granularidad |
+|---|---|---|---|
+| **XM – API Sinergox** | API REST (`POST`, JSON) | `xm_precio_bolsa`, `xm_demanda`, `xm_embalses`, `xm_generacion_recurso`, `xm_listado_recursos`, `xm_aportes_hidricos` | Horaria / Diaria (2024-01-01 a 2026-09-30) |
+| **IDEAM – datos.gov.co** | API Socrata (`SoQL`) | `ideam_precipitacion_diaria`, `ideam_temperatura_diaria` | Diaria por estación en Antioquia (2025-01-01 a 2026-09-30) |
+| **NOAA – Índice ONI** | Archivo de texto plano | `noaa_oni` | Trimestral móvil (1950 a 2026) |
+| **EnerAndes** | Excel interno (`ventas_enerandes_2023_2026.xlsx`) | `enerandes_ventas_2023` … `enerandes_ventas_2026` | Mensual por municipio (2023–2026) |
+| **DIVIPOLA – MinSalud** | Datos Abiertos (`pqwj-3fi4`) | `divipola_municipios` | Maestra oficial de municipios de Antioquia |
 
-IDEAM se consulta en ventanas semanales con filtros de Antioquia y fechas, y cada resultado se agrega por día y estación mediante SoQL en el servidor. Temperatura media, mínima y máxima se calculan sobre las observaciones del dataset `sbwg-7ju4`.
+### Notas técnicas de extracción
 
-## ⚙️ Cómo ejecutar
+* **Fuente externa propia (DIVIPOLA):** Incorporada desde [Datos Abiertos MinSalud](https://www.datos.gov.co/Salud-y-Protecci%C3%B3n-Social/MinSalud-Divipola-Municipios/pqwj-3fi4) para estandarizar códigos municipales de Antioquia (`05`). El extractor `src/extract/xm_aportes.py` (`AporEner`) consulta aportes hídricos como métrica complementaria de XM y no como fuente externa propia.
+* **Agregación en servidor (IDEAM):** Las consultas se ejecutan en ventanas semanales filtradas para Antioquia y se agregan por día y estación mediante SoQL (`avg`, `min`, `max` sobre el dataset `sbwg-7ju4` para temperatura y suma diaria para precipitación).
+* **Idempotencia y muestras:** `src.pipeline` omite archivos Parquet existentes; para volver a descargar todo se ejecuta `python -m src.pipeline --forzar`. Las muestras de las primeras 200 filas por tabla se exportan automáticamente a `data/sample/`.
+
+## 📂 Estructura del repositorio
+
+```text
+├── consultas/
+│   └── oro/                      # Consultas SQL de negocio sobre DuckDB
+├── data/
+│   ├── insumos/                  # Excel fuente de EnerAndes (manual)
+│   ├── bronze/                   # Parquets crudos (generado localmente)
+│   ├── silver/                   # Parquets limpios y cuarentena_*.parquet (generado localmente)
+│   ├── gold/                     # Base analítica observatorio.duckdb (generado localmente)
+│   └── sample/                   # Muestras CSV de las primeras 200 filas por fuente
+├── dbt/                          # Modelos SQL dimensionales y pruebas de integridad
+├── docs/
+│   ├── bitacoras/                # Seguimiento individual del desarrollo
+│   ├── diccionario_datos.md      # Definición de columnas y tipos en capa Oro
+│   ├── modelo_dimensional.md     # Diagrama ER y granularidad de hechos/dimensiones
+│   ├── perfilamiento_bronce.md   # Diagnóstico inicial de nulos, duplicados y brechas
+│   └── reporte_calidad.md        # Métricas antes/después y motivos de cuarentena (autogenerado)
+├── evidencias/                   # Capturas de ejecución y validación del entorno
+├── src/
+│   ├── extract/                  # Extractores independientes por fuente (xm, ideam, noaa, enerandes, divipola)
+│   ├── quality/                  # Contratos de validación de esquemas en Pandera
+│   ├── transform/                # Reglas de limpieza, normalización y envío a cuarentena
+│   ├── config.py                 # Rutas, URLs, ventanas de extracción y parámetros globales
+│   ├── consultar.py              # Ejecutor de consultas SQL sobre DuckDB
+│   ├── pipeline.py               # Orquestador de extracción hacia capa Bronce
+│   ├── transformar.py            # Orquestador de capa Plata, reporte de calidad y dbt build
+│   └── utils.py                  # Cliente HTTP con reintentos, paginación por ventanas y persistencia
+└── tests/                        # Pruebas unitarias (pytest)
+```
+
+## ⚙️ Requisitos e instalación
+
+Requiere **Python 3.11 o superior**. En PowerShell, desde la raíz del repositorio:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-# ubicar ventas_enerandes_2023_2026.xlsx en data/insumos/ (si se necesita extraer bronce)
-python -m src.transformar     # una orden: Plata + Pandera + dbt build (Oro)
-python -m src.pipeline          # descarga a data/bronze/ y crea muestras CSV
-python -m src.consultar         # consultas SQL de BI con DuckDB
-python -m pytest                # pruebas automáticas
 ```
 
-### EA2: calidad y modelo dimensional
+Antes de ejecutar la extracción, ubicar el insumo manual en `data/insumos/ventas_enerandes_2023_2026.xlsx`.
+
+## 🚀 Ejecución del pipeline
 
 ```powershell
-python -m pip install -r requirements.txt
+# 1. Extraer fuentes a capa Bronce y generar muestras CSV
+python -m src.pipeline
+
+# 2. Ejecutar limpieza Plata, validaciones Pandera, reporte de calidad y dbt build (Oro)
 python -m src.transformar
+
+# 3. Correr consultas SQL de negocio en DuckDB
+python -m src.consultar
+
+# 4. Ejecutar suite de pruebas unitarias
+python -m pytest
 ```
 
-`src.transformar` descarga DIVIPOLA desde la API oficial de Datos Abiertos si aún no
-está en `data/bronze/`, transforma y valida cada tabla Plata con Pandera, conserva
-rechazos en cuarentena, escribe métricas en [`docs/reporte_calidad.md`](docs/reporte_calidad.md)
-y ejecuta `dbt build` sobre DuckDB. El esquema estrella, granos y diccionario están en
-[`docs/modelo_dimensional.md`](docs/modelo_dimensional.md) y
-[`docs/diccionario_datos.md`](docs/diccionario_datos.md). Las consultas y sus resultados
-se documentan en [`consultas/oro/README.md`](consultas/oro/README.md).
+> **Nota:** `src.transformar` descarga `divipola_municipios.parquet` desde Datos Abiertos si aún no existe en `data/bronze/`, valida cada tabla Plata con Pandera, guarda filas no corregibles en `data/silver/cuarentena_<fuente>.parquet`, actualiza `docs/reporte_calidad.md` y construye el modelo estrella en `data/gold/observatorio.duckdb`.
 
-La fuente propia externa es **DIVIPOLA — MinSalud / datos.gov.co**, separada de XM:
-https://www.datos.gov.co/Salud-y-Protecci%C3%B3n-Social/MinSalud-Divipola-Municipios/pqwj-3fi4
-La bitácora individual está en [`docs/bitacoras/Cardona_Jose.md`](docs/bitacoras/Cardona_Jose.md).
-Completar con enlaces verificables los commits y la revisión por compañero requeridos por
-el flujo de equipo; no se pueden afirmar hasta que se ejecuten realmente.
+## 📊 Consultas de negocio (Capa Oro)
 
-El reporte de calidad genera conteos reales después de una ejecución; no versionar ni
-presentar como resultado las cifras de una corrida que falló. Los Parquet de bronce,
-plata, gold, el DuckDB local, `dbt/target` y `dbt/logs` están excluidos de Git.
+Las consultas SQL se encuentran en [`consultas/oro/`](consultas/oro/) y se ejecutan directamente sobre las tablas dimensionales en DuckDB. Resultados de referencia de la corrida local:
 
-XM se consulta desde el 1 de enero de 2024 hasta el 30 de septiembre de 2026; IDEAM desde el 1 de enero de 2025 hasta la fecha final. El archivo Excel de EnerAndes debe estar disponible en `data/insumos/ventas_enerandes_2023_2026.xlsx`.
+1. **Ventas mensuales por municipio** ([`01_ventas_mensuales_por_municipio.sql`](consultas/oro/01_ventas_mensuales_por_municipio.sql)): Medellín lidera la demanda mensual con `30.982.163 kWh` en agosto de 2026, seguido de junio (`30.869.312 kWh`) y julio (`30.317.940 kWh`).
+2. **Precio y demanda por hora** ([`02_precio_demanda_por_hora.sql`](consultas/oro/02_precio_demanda_por_hora.sql)): La hora 1 promedia `420,37 COP/kWh` y `8.712.276,21 kWh` de demanda sobre `1.004` observaciones diarias.
+3. **Generación por fuente energética** ([`03_generacion_por_fuente_energia.sql`](consultas/oro/03_generacion_por_fuente_energia.sql)): En 2024, la generación hidráulica (`AGUA`) suma `54.494.304.158,49 kWh`, seguida de `GAS` (`12.620.635.725,43 kWh`) y `CARBON` (`9.473.290.904,59 kWh`).
 
-El pipeline omite archivos Parquet existentes. Para volver a descargar todo: `python -m src.pipeline --forzar`. Las muestras de las primeras 200 filas de cada Parquet se escriben en `data/sample/`; los datos completos de `data/bronze/` no se versionan. El perfilamiento y sus hallazgos están en `docs/perfilamiento.md`.
+El detalle completo y el alcance de cada consulta están documentados en [`consultas/oro/README.md`](consultas/oro/README.md).
 
-## 🏗️ Arquitectura
+## 📚 Documentación y entregables
 
-```
-Fuentes -> BRONCE (dato tal cual + linaje) -> PLATA (limpio) -> ORO (modelo estrella) -> Dashboard
-```
+* **Modelo dimensional y granularidad:** [`docs/modelo_dimensional.md`](docs/modelo_dimensional.md) (`dim_fecha`, `dim_municipio`, `dim_recurso`, `dim_estacion`, `dim_enso`, `fact_ventas_mensual`, `fact_mercado_horario`, `fact_generacion_recurso`).
+* **Diccionario de datos (Capa Oro):** [`docs/diccionario_datos.md`](docs/diccionario_datos.md).
+* **Perfilamiento inicial (Capa Bronce):** [`docs/perfilamiento_bronce.md`](docs/perfilamiento_bronce.md).
+* **Reporte de calidad y cuarentenas:** [`docs/reporte_calidad.md`](docs/reporte_calidad.md).
+* **Bitácora individual:** [`docs/bitacoras/Cardona_Jose.md`](docs/bitacoras/Cardona_Jose.md).
+
+### Archivos excluidos de Git
+
+Por tamaño y reproducibilidad, se ignoran `.venv/`, `data/bronze/`, `data/silver/`, `data/gold/`, `*.duckdb`, `dbt/target/` y `dbt/logs/`. Todo el almacenamiento analítico se reconstruye localmente ejecutando los scripts del pipeline.
 
 ## 🤖 Uso de IA
 
-SE USO GEMINI PARA GENERAR UNA GUIA SOBRE QUE EVIDENCIAS SON IMPORTANTES PARA ESTE PROYECTO BASADO EN LOS REQUIERIMIENTOS DE LA TAREA, ES QUE ERAN BASTANTES COSITAS Y HONESTAMENTE NO SABIA QUE QUERIA EL PROFE VER SOBRE EL DESARROLLO (POR MI COLOCO MIL CAPTURAS) ENTONCES SI QUERIA TENER UNA IDEA SOBRE QUE ERA LO MAS IMPORTANTE Y QUE DEBIA MOSTRAR ASI NI MI VIDEO, NI MIS CAPTURAS COLAPSARIAN EL PROYECTO Y SE VERIA MAS PROFESIONAL (SOY DECENTE DESARROLLANDO Y NO TAN BUENO CON DOCUMENTACIÓN -SALUDOS LOS QUIERO <3 )
+Se utilizó Gemini como apoyo para estructurar la guía de evidencias relevantes del proyecto según los requerimientos de la entrega, con el fin de priorizar las capturas técnicas clave y mantener la documentación clara y concisa.
 
-## 🤖 EVIDENCIAS
+## 📸 Evidencias
 
-![alt text](evidencias/evidencia_01_entorno.png)
+![Evidencia 01 - Entorno](evidencias/evidencia_01_entorno.png)
 
-![alt text](evidencias/evidencia_02_repositorio.png)
+![Evidencia 02 - Repositorio](evidencias/evidencia_02_repositorio.png)
 
-![alt text](evidencias/evidencia_03_repositorio.png)
+![Evidencia 03 - Repositorio](evidencias/evidencia_03_repositorio.png)
 
-![alt text](evidencias/evidencia_04_repositorio.png)
+![Evidencia 04 - Repositorio](evidencias/evidencia_04_repositorio.png)
 
-![alt text](evidencias/evidencia_05_repositorio.png)
+![Evidencia 05 - Repositorio](evidencias/evidencia_05_repositorio.png)
 
-![alt text](evidencias/evidencia_06_repositorio.png)
+![Evidencia 06 - Repositorio](evidencias/evidencia_06_repositorio.png)
 
-![alt text](evidencias/evidencia_07_repositorio.png)
-
-
+![Evidencia 07 - Repositorio](evidencias/evidencia_07_repositorio.png)

@@ -1,4 +1,3 @@
-"""Temperatura diaria por estacion, agregada en el servidor de datos.gov.co."""
 import pandas as pd
 
 from src import config
@@ -10,7 +9,6 @@ PAGINA = 50000
 
 
 def consulta_soql(inicio, fin, offset: int) -> dict:
-    """Prepara una agregacion diaria de temperatura en SoQL."""
     return {
         "$select": (
             f"{CAMPOS}, date_trunc_ymd(fechaobservacion) AS fecha, "
@@ -31,7 +29,6 @@ def consulta_soql(inicio, fin, offset: int) -> dict:
 
 
 def extraer(forzar: bool = False) -> None:
-    """Descarga temperaturas medias, minimas y maximas por dia y estacion."""
     log("IDEAM - temperatura del aire (SoQL)")
     if ya_existe(NOMBRE, forzar):
         return
